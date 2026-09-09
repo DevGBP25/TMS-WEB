@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>7669e7bc-4fe5-45eb-8004-593ce4a91e1f</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.11" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Gbp.Tms.Application\Gbp.Tms.Application.csproj" />
+    <ProjectReference Include="..\Gbp.Tms.Infrastructure\Gbp.Tms.Infrastructure.csproj" />
+  </ItemGroup>
+
+
+  <PropertyGroup>
+    <!-- Los comentarios XML alimentan las descripciones de Swagger.
+         CS1591: no exigimos documentar cada miembro público.
+         CS1573: el CancellationToken de cada acción no se documenta (Swagger lo ignora). -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+</Project>
