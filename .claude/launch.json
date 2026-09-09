@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tms-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
+      "port": 5173,
+      "autoPort": false
+    },
+    {
+      "name": "tms-api",
+      "url": "http://localhost:5202",
+      "port": 5202,
+      "autoPort": false
+    }
+  ]
+}

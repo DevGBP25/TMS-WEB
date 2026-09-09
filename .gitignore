@@ -1,0 +1,27 @@
+# ---- .NET ----
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+.vs/
+
+# ---- Publicación (se regenera con deploy.ps1) ----
+publish/*
+!publish/.gitkeep
+backend/Gbp.Tms.Api/wwwroot/
+
+# ---- Node / Vite ----
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+
+# ---- Secretos y entorno local ----
+appsettings.Production.json
+appsettings.Local.json
+.env.local
+.env.*.local
+
+# ---- Logs ----
+logs/
+*.log
