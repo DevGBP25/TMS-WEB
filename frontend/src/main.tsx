@@ -31,7 +31,14 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      {/* BASE_URL lo fija Vite desde `base`: '/' en la raíz, '/TMS/' si la
+          aplicación cuelga de una subruta de IIS. Sin esto el router creería
+          estar en la raíz y ninguna ruta haría match.
+
+          La barra final hay que quitarla: React Router exige que la ruta
+          empiece por el basename completo, y '/TMS' no empieza por '/TMS/'.
+          Con la barra, entrar sin ella deja la pantalla en blanco sin error. */}
+      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/+$/, '') || '/'}>
         <AuthProvider>
           <App />
         </AuthProvider>

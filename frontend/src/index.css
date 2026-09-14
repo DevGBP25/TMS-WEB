@@ -231,6 +231,14 @@
     border-color: color-mix(in srgb, var(--color-info) 20%, transparent);
   }
 
+  /* Estados que no piden nada del operador —sin factura, anulada— y que
+     por eso no deben competir por la atención con los que sí. */
+  .chip-mute {
+    background: color-mix(in srgb, var(--color-ink-faint) 10%, transparent);
+    color: var(--color-ink-faint);
+    border-color: color-mix(in srgb, var(--color-ink-faint) 18%, transparent);
+  }
+
   .field {
     width: 100%;
     background-color: var(--color-field);

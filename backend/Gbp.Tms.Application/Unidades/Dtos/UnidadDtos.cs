@@ -36,7 +36,7 @@ public record UnidadListaDto(
     string    Estado,
     bool      Activo,
     DateTime  FechaCreacion,
-    /// <summary>Piloto con turno abierto sobre la unidad, si lo hay.</summary>
+    // Piloto con turno abierto sobre la unidad, si lo hay.
     string?   PilotoActual,
     DateTime? TurnoDesde);
 

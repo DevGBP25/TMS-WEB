@@ -15,7 +15,7 @@ interface Enlace {
 const enlaces: Enlace[] = [
   { to: '/', label: 'Tablero', icon: 'dashboard', end: true },
   { to: '/viajes', label: 'Viajes', icon: 'route' },
-  { to: '/planificar', label: 'Planificar', icon: 'edit_calendar' },
+  { to: '/entregas', label: 'Entregas', icon: 'inventory_2' },
   { to: '/unidades', label: 'Unidades', icon: 'local_shipping' },
   { to: '/usuarios', label: 'Usuarios', icon: 'group', roles: ['ADMIN'] },
 ]
@@ -51,9 +51,11 @@ function Navegacion({ onNavegar }: { onNavegar?: () => void }) {
       </div>
 
       <div className="px-md mb-lg">
-        <NavLink to="/planificar" onClick={onNavegar} className="btn-accent w-full">
+        {/* Un viaje no se crea en blanco: nace de las entregas que el
+            supervisor escoge, así que el botón lleva a esa tabla. */}
+        <NavLink to="/entregas" onClick={onNavegar} className="btn-accent w-full">
           <Icon name="add" size={18} />
-          Planificar viaje
+          Armar viaje
         </NavLink>
       </div>
 
@@ -71,15 +73,20 @@ function Navegacion({ onNavegar }: { onNavegar?: () => void }) {
       </div>
 
       <div className="px-md mt-auto flex flex-col gap-xs pt-lg border-t border-white/5">
-        <a
-          href="/swagger"
-          target="_blank"
-          rel="noreferrer"
-          className={`${enlaceBase} text-ink-muted hover:bg-elevated/50 hover:text-ink`}
-        >
-          <Icon name="api" />
-          API
-        </a>
+        {/* Swagger sólo se registra en Development. En el servidor el enlace
+            llevaría fuera de la aplicación —a la raíz del sitio que la
+            hospeda— así que ni se dibuja. */}
+        {import.meta.env.DEV && (
+          <a
+            href={`${import.meta.env.BASE_URL}swagger`}
+            target="_blank"
+            rel="noreferrer"
+            className={`${enlaceBase} text-ink-muted hover:bg-elevated/50 hover:text-ink`}
+          >
+            <Icon name="api" />
+            API
+          </a>
+        )}
         <div className="px-md py-sm flex items-center gap-sm min-w-0">
           <div className="w-7 h-7 rounded-full bg-accent/20 border border-accent/30 flex items-center justify-center shrink-0">
             <span className="text-[10px] font-semibold text-accent-soft">

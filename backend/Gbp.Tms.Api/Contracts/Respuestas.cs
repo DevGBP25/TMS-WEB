@@ -10,6 +10,15 @@ public record RespuestaOk
 public record RespuestaViajeCreado : RespuestaOk
 {
     public int ViajeId { get; init; }
+
+    /// <summary>Correlativo legible, del estilo V260910-001.</summary>
+    public string Numero { get; init; } = string.Empty;
+}
+
+/// <summary>Respuesta de una operación en lote sobre entregas.</summary>
+public record RespuestaEntregas : RespuestaOk
+{
+    public int Afectadas { get; init; }
 }
 
 /// <summary>

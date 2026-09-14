@@ -1,36 +1,116 @@
 import { api } from './client'
-import type {
-  PagedResult,
-  Piloto,
-  Ruta,
-  Unidad,
-  ViajeDetalle,
-  ViajeFiltro,
-  ViajeIndicadores,
-  ViajeListItem,
-} from '@/types/tms'
+import type { EstadoEntrega } from './entregas'
+
+export type EstadoViaje =
+  | 'PLANIFICADO'
+  | 'ASIGNADO'
+  | 'EN_RUTA'
+  | 'ENTREGADO'
+  | 'LIQUIDADO'
+  | 'CANCELADO'
+
+export interface Viaje {
+  idViaje: number
+  numero: string
+  fecha: string
+  estado: EstadoViaje
+  pesoKg: number
+  totalEntregas: number
+  entregasCompletadas: number
+  salidaReal?: string
+  retornoReal?: string
+  observaciones?: string
+  fechaCreacion: string
+  idUnidad?: number
+  unidadCodigo?: string
+  unidadPlaca?: string
+  idPiloto?: number
+  pilotoNombre?: string
+}
+
+export interface ViajeCabecera extends Viaje {
+  salidaProgramada?: string
+  unidadCapacidadKg?: number
+  pilotoTelefono?: string
+}
+
+export interface ViajeEntrega {
+  idEntrega: number
+  sapDocNum: number
+  sapOrdenVenta?: number
+  sapFacturaNum?: number
+  clienteCodigo: string
+  clienteNombre: string
+  direccion?: string
+  municipio?: string
+  pesoKg: number
+  monto: number
+  fechaDocumento: string
+  estado: EstadoEntrega
+  secuencia?: number
+  receptor?: string
+  motivoRechazo?: string
+  entregadaEn?: string
+}
+
+export interface ViajeDetalle {
+  viaje: ViajeCabecera
+  entregas: ViajeEntrega[]
+}
+
+export interface Piloto {
+  idUsuario: number
+  usuario: string
+  nombre: string
+  telefono?: string
+  /** Número del viaje que ya trae ese día, si lo hay. */
+  viajeDelDia?: string
+}
+
+export interface FiltroViajes {
+  buscar?: string
+  estado?: string
+  desde?: string
+  hasta?: string
+}
+
+export const ETIQUETA_VIAJE: Record<EstadoViaje, string> = {
+  PLANIFICADO: 'Planificado',
+  ASIGNADO: 'Asignado',
+  EN_RUTA: 'En ruta',
+  ENTREGADO: 'Entregado',
+  LIQUIDADO: 'Liquidado',
+  CANCELADO: 'Cancelado',
+}
+
+/** Estados a los que se puede pasar desde cada uno. Refleja el CHECK del procedimiento. */
+export const TRANSICIONES: Record<EstadoViaje, EstadoViaje[]> = {
+  PLANIFICADO: ['CANCELADO'],
+  ASIGNADO: ['EN_RUTA', 'PLANIFICADO', 'CANCELADO'],
+  EN_RUTA: ['ENTREGADO'],
+  ENTREGADO: ['LIQUIDADO'],
+  LIQUIDADO: [],
+  CANCELADO: [],
+}
 
 export const viajesApi = {
-  listar: (filtro: ViajeFiltro = {}) =>
-    api.get<PagedResult<ViajeListItem>>('/api/viajes', { ...filtro }),
+  listar: (filtro: FiltroViajes = {}) => api.get<Viaje[]>('/api/viajes', { ...filtro }),
 
   obtener: (id: number) => api.get<ViajeDetalle>(`/api/viajes/${id}`),
 
-  indicadores: (desde?: string, hasta?: string) =>
-    api.get<ViajeIndicadores>('/api/viajes/indicadores', { desde, hasta }),
+  pilotos: (fecha?: string) => api.get<Piloto[]>('/api/viajes/pilotos', { fecha }),
 
-  crear: (body: { fecha: string; rutaId?: number; sapDocEntries: number[] }) =>
-    api.post<{ ok: boolean; viajeId: number }>('/api/viajes', body),
+  crear: (datos: {
+    fecha: string
+    idUnidad?: number | null
+    idPiloto?: number | null
+    observaciones?: string
+    entregas?: number[]
+  }) => api.post<{ ok: boolean; viajeId: number; numero: string }>('/api/viajes', datos),
 
-  asignar: (id: number, unidadId: number, pilotoId: number) =>
-    api.post<{ ok: boolean }>(`/api/viajes/${id}/asignar`, { unidadId, pilotoId }),
+  asignarRecursos: (id: number, idUnidad: number, idPiloto: number) =>
+    api.post<{ ok: boolean }>(`/api/viajes/${id}/recursos`, { idUnidad, idPiloto }),
 
-  cambiarEstado: (id: number, estado: string, observaciones?: string) =>
+  cambiarEstado: (id: number, estado: EstadoViaje, observaciones?: string) =>
     api.post<{ ok: boolean }>(`/api/viajes/${id}/estado`, { estado, observaciones }),
-}
-
-export const catalogosApi = {
-  pilotos:  () => api.get<Piloto[]>('/api/catalogos/pilotos'),
-  unidades: (estado?: string) => api.get<Unidad[]>('/api/catalogos/unidades', { estado }),
-  rutas:    () => api.get<Ruta[]>('/api/catalogos/rutas'),
 }

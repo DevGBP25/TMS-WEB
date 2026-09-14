@@ -124,6 +124,39 @@ using (var scope = app.Services.CreateScope())
     _ = scope.ServiceProvider.GetRequiredService<Gbp.Tms.Infrastructure.Persistence.ISqlConnectionFactory>();
 }
 
+/* Una línea al arrancar que diga con qué configuración quedó, y desde qué
+   carpeta salió. Sin ella, un ajuste que no llega a la aplicación se
+   manifiesta más tarde como un error de red y se busca donde no es —o se
+   edita el archivo de otra carpeta y parece que el cambio no sirvió. */
+Log.Information(
+    "TMS arrancó en {Entorno} desde {Carpeta}. SAP: {Url} compañía {Compania}. " +
+    "Base de datos: {Servidor} / {Base}",
+    app.Environment.EnvironmentName,
+    app.Environment.ContentRootPath,
+    Valor(builder.Configuration["Sap:Url"]),
+    Valor(builder.Configuration["Sap:Company"]),
+    ServidorSql(builder.Configuration.GetConnectionString("Tms")).servidor,
+    ServidorSql(builder.Configuration.GetConnectionString("Tms")).base_);
+
+static string Valor(string? v) => string.IsNullOrWhiteSpace(v) ? "SIN CONFIGURAR" : v;
+
+/* Sólo el destino, nunca el usuario ni la contraseña: el log lo lee cualquiera
+   que tenga acceso a la carpeta. */
+static (string servidor, string base_) ServidorSql(string? cadena)
+{
+    if (string.IsNullOrWhiteSpace(cadena)) return ("SIN CONFIGURAR", "SIN CONFIGURAR");
+
+    try
+    {
+        var b = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(cadena);
+        return (Valor(b.DataSource), Valor(b.InitialCatalog));
+    }
+    catch (ArgumentException)
+    {
+        return ("CADENA INVÁLIDA", "CADENA INVÁLIDA");
+    }
+}
+
 app.UseMiddleware<ExceptionMiddleware>();
 app.UseSerilogRequestLogging();
 

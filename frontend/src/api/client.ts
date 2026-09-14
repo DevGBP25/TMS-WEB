@@ -1,4 +1,8 @@
-const BASE = import.meta.env.VITE_API_URL ?? ''
+/* La API vive en el mismo origen que la página, así que basta con la subruta
+   donde está montada la aplicación: '' en la raíz, '/TMS' si cuelga de una.
+   BASE_URL siempre trae barra final y aquí estorba, porque las rutas ya
+   empiezan por '/api'. VITE_API_URL sigue mandando si se define. */
+const BASE = import.meta.env.VITE_API_URL ?? import.meta.env.BASE_URL.replace(/\/+$/, '')
 
 const SIN_SERVIDOR =
   'No se pudo contactar con el servidor. Verifique que la API esté en ejecución.'

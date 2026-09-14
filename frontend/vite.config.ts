@@ -9,6 +9,12 @@ export default defineConfig(({ mode }) => {
   const apiTarget = env.VITE_API_PROXY ?? 'http://localhost:5202'
 
   return {
+    /* Ruta pública donde queda montada la aplicación. En la raíz de un sitio
+       es '/', pero bajo IIS puede colgar de una subruta (ia.gbp.com.gt/TMS/),
+       y entonces los assets y las rutas del router tienen que llevar ese
+       prefijo. Se define con VITE_BASE al compilar; nunca en el código. */
+    base: env.VITE_BASE || '/',
+
     plugins: [react(), tailwindcss()],
 
     resolve: {

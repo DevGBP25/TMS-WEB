@@ -1,23 +1,83 @@
 namespace Gbp.Tms.Application.Abstractions;
 
-/// <summary>Entrega de SAP B1 (ODLN) candidata a formar parte de un viaje.</summary>
-public record SapEntrega(
-    int      DocEntry,
-    int      DocNum,
-    DateTime DocDate,
-    string   CardCode,
-    string   CardName,
-    string?  Address,
-    decimal  DocTotal,
-    decimal  PesoKg);
+/// <summary>Línea de un documento de SAP: un producto y su cantidad.</summary>
+public record LineaSap(
+    int      LineaNum,
+    string   CodigoArticulo,
+    // SAP antepone el código de barras a la descripción separado por "|".
+    string?  CodigoBarras,
+    string   Descripcion,
+    decimal  Cantidad,
+    string?  Unidad,
+    string?  Almacen);
 
-/// <summary>Acceso de sólo lectura y de escritura al SAP B1 Service Layer.</summary>
+/// <summary>
+/// Orden de venta tal como está en SAP.
+///
+/// Se lee sin sus líneas a propósito: el Service Layer manda cada línea con
+/// casi cien campos y no admite pedir sólo algunos, así que incluirlas
+/// convierte una consulta de dos segundos en una de veinte.
+/// </summary>
+public record OrdenSap(
+    int      SapDocEntry,
+    int      SapDocNum,
+    DateTime FechaDocumento,
+    string   ClienteCodigo,
+    string   ClienteNombre,
+    string?  Direccion,
+    string?  Municipio,
+    decimal  Monto,
+    string?  Comentarios,
+    /// <summary>
+    /// SAP ya copió la orden a su documento destino. En esta operación eso
+    /// significa que la entrega existe; es lo único que se puede saber sin
+    /// bajar las líneas de todas las entregas del rango.
+    /// </summary>
+    bool     Cerrada,
+    bool     Anulada);
+
+/// <summary>
+/// Entrega de SAP con sus productos. Sólo se lee así al asignar, que es
+/// cuando hacen falta las líneas y son pocos documentos.
+/// </summary>
+public record EntregaSap(
+    int      SapDocEntry,
+    int      SapDocNum,
+    int?     SapOrdenVenta,
+    int?     SapOrdenVentaDocEntry,
+    int?     SapFacturaNum,
+    string   ClienteCodigo,
+    string   ClienteNombre,
+    string?  Direccion,
+    string?  Municipio,
+    decimal  PesoKg,
+    decimal  Monto,
+    string?  Comentarios,
+    DateTime FechaDocumento,
+    bool     Anulada,
+    bool     Facturada,
+    IReadOnlyList<LineaSap> Lineas);
+
+/// <summary>Acceso de sólo lectura al SAP B1 Service Layer.</summary>
 public interface ISapServiceLayerClient
 {
-    /// <summary>Entregas de la fecha que aún no han sido incluidas en ningún viaje.</summary>
-    Task<IReadOnlyList<SapEntrega>> EntregasPendientesAsync(DateTime fecha, CancellationToken ct = default);
+    /// <summary>
+    /// Órdenes de venta del rango, sin líneas. Es la consulta del listado y
+    /// por eso se mantiene barata.
+    /// </summary>
+    Task<IReadOnlyList<OrdenSap>> OrdenesDeRangoAsync(
+        DateTime desde, DateTime hasta, CancellationToken ct = default);
 
-    Task<SapEntrega?> ObtenerEntregaAsync(int docEntry, CancellationToken ct = default);
+    /// <summary>
+    /// Entregas que nacieron de esas órdenes, con sus productos.
+    ///
+    /// El enlace vive en las líneas de la entrega, así que esta consulta sí
+    /// las baja. Para que no cueste una eternidad se acota por los clientes
+    /// de las órdenes elegidas, no sólo por fecha.
+    /// </summary>
+    Task<IReadOnlyList<EntregaSap>> EntregasDeOrdenesAsync(
+        IReadOnlyList<int> ordenDocEntries, IReadOnlyList<string> clientes,
+        DateTime desde, DateTime hasta, CancellationToken ct = default);
 
     /// <summary>GET crudo contra el Service Layer; <paramref name="recurso"/> va sin barra inicial.</summary>
     Task<string> GetRawAsync(string recurso, CancellationToken ct = default);

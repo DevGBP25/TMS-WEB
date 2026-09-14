@@ -25,3 +25,6 @@ appsettings.Local.json
 # ---- Logs ----
 logs/
 *.log
+
+# ---- Archivos de bloqueo de Office ----
+~$*

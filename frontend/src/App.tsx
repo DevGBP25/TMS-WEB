@@ -6,7 +6,7 @@ import Login from '@/pages/Login'
 import Tablero from '@/pages/Tablero'
 import Viajes from '@/pages/Viajes'
 import ViajeDetalle from '@/pages/ViajeDetalle'
-import Planificar from '@/pages/Planificar'
+import Entregas from '@/pages/Entregas'
 import Unidades from '@/pages/Unidades'
 import Usuarios from '@/pages/Usuarios'
 
@@ -20,7 +20,7 @@ export default function App() {
           <Route index element={<Tablero />} />
           <Route path="viajes" element={<Viajes />} />
           <Route path="viajes/:id" element={<ViajeDetalle />} />
-          <Route path="planificar" element={<Planificar />} />
+          <Route path="entregas" element={<Entregas />} />
           <Route path="unidades" element={<Unidades />} />
 
           {/* Ocultar el enlace no basta: sin esto, escribir la URL bastaría
