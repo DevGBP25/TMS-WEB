@@ -45,7 +45,7 @@ Api  →  Application  →  Domain
 
 | Herramienta   | Versión usada | Nota                                             |
 |---------------|---------------|--------------------------------------------------|
-| .NET SDK      | 9.0.102       | ver *Actualizar a .NET 10* más abajo              |
+| .NET SDK      | 8.0.          | ver *Actualizar a .NET 10* más abajo              |
 | Node.js       | 24.15         | 20 LTS o superior                                 |
 | SQL Server    | cualquiera    | local para desarrollo                             |
 | IIS           | con Hosting Bundle de ASP.NET Core | sólo en el servidor        |
