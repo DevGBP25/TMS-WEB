@@ -39,7 +39,7 @@ export default function Tablero() {
     <div className="flex flex-col gap-lg">
       <PageHeader
         titulo={`Hola, ${(usuario?.nombre ?? '').split(' ')[0] || 'bienvenido'}`}
-        subtitulo={fmtFecha(new Date().toISOString())}
+        subtitulo={fmtFecha(hoy())}
       >
         <Link to="/entregas" className="btn-accent shrink-0">
           <Icon name="add" size={18} />

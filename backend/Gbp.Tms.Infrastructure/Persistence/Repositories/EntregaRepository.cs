@@ -46,9 +46,11 @@ public class EntregaRepository : IEntregaRepository
             Pagina    = filtro.Pagina,
             PorPagina = filtro.PorPagina,
             Items     = filas.Select(f => new EntregaListaDto(
-                f.id_entrega, f.sap_doc_entry, f.sap_doc_num, f.sap_orden_venta, f.sap_factura_num,
+                f.id_entrega, f.sap_doc_entry, f.sap_doc_num,
+                f.sap_orden_doc_entry, f.sap_orden_venta, f.sap_factura_num,
                 f.cliente_codigo, f.cliente_nombre, f.direccion, f.municipio,
-                f.peso_kg, f.fecha_documento, f.estado, f.id_viaje, f.secuencia,
+                f.peso_kg, f.fecha_documento, f.hora_documento, f.fecha_entrega,
+                f.estado, f.id_viaje, f.secuencia,
                 f.id_usuario_piloto, f.asignada_en,
                 f.receptor, f.motivo_rechazo, f.entregada_en,
                 f.piloto_nombre, f.viaje_numero, f.viaje_fecha, f.unidad_codigo,
@@ -76,9 +78,11 @@ public class EntregaRepository : IEntregaRepository
             .ToList();
 
         return new EntregaDetalleDto(
-            d.id_entrega, d.sap_doc_entry, d.sap_doc_num, d.sap_orden_venta, d.sap_factura_num,
+            d.id_entrega, d.sap_doc_entry, d.sap_doc_num,
+            d.sap_orden_doc_entry, d.sap_orden_venta, d.sap_factura_num,
             d.cliente_codigo, d.cliente_nombre, d.direccion, d.municipio,
-            d.peso_kg, d.fecha_documento, d.estado, d.id_viaje, d.secuencia,
+            d.peso_kg, d.fecha_documento, d.hora_documento, d.fecha_entrega,
+            d.estado, d.id_viaje, d.secuencia,
             d.id_usuario_piloto, d.asignada_en, d.receptor, d.motivo_rechazo, d.entregada_en,
             d.observaciones, d.fecha_creacion,
             d.piloto_nombre, d.piloto_usuario, d.piloto_telefono,
@@ -137,14 +141,14 @@ public class EntregaRepository : IEntregaRepository
     }
 
     public async Task<int> AsignarPilotoAsync(
-        int idPiloto, IReadOnlyList<EntregaSap> entregas, CancellationToken ct = default)
+        int idPiloto, IReadOnlyList<EntregaAAsignar> boletas, CancellationToken ct = default)
     {
         using var conn = await _factory.CreateAsync(ct);
 
         var p = new DynamicParameters();
         p.Add("@id_piloto", idPiloto);
-        p.Add("@entregas", TablaEntregas(entregas).AsTableValuedParameter("dbo.tp_gbp_tms_entrega_asignar"));
-        p.Add("@lineas",   TablaLineas(entregas).AsTableValuedParameter("dbo.tp_gbp_tms_entrega_linea"));
+        p.Add("@ordenes", TablaOrdenes(boletas).AsTableValuedParameter("dbo.tp_gbp_tms_entrega_asignar"));
+        p.Add("@lineas",  TablaLineas(boletas).AsTableValuedParameter("dbo.tp_gbp_tms_entrega_linea"));
 
         try
         {
@@ -159,6 +163,71 @@ public class EntregaRepository : IEntregaRepository
             throw new AppException(ex.Message, 409);
         }
     }
+
+    public async Task<IReadOnlyList<PendienteDeBoleta>> PendientesDeBoletaAsync(
+        int dias, CancellationToken ct = default)
+    {
+        using var conn = await _factory.CreateAsync(ct);
+
+        var filas = await conn.QueryAsync<FilaPendiente>(new CommandDefinition(
+            "dbo.usp_gbp_tms_entrega_pendientes_de_boleta",
+            new { dias },
+            commandType: CommandType.StoredProcedure,
+            cancellationToken: ct));
+
+        return filas.Select(f => new PendienteDeBoleta(
+            f.id_entrega, f.sap_orden_doc_entry, f.sap_orden_venta,
+            f.cliente_codigo, f.fecha_documento)).ToList();
+    }
+
+    public async Task<int> VincularAsync(
+        IReadOnlyList<VinculoEntrega> vinculos, CancellationToken ct = default)
+    {
+        if (vinculos.Count == 0) return 0;
+
+        using var conn = await _factory.CreateAsync(ct);
+
+        var p = new DynamicParameters();
+        p.Add("@vinculos", TablaVinculos(vinculos).AsTableValuedParameter("dbo.tp_gbp_tms_entrega_vinculo"));
+
+        try
+        {
+            return await conn.ExecuteScalarAsync<int>(new CommandDefinition(
+                "dbo.usp_gbp_tms_entrega_vincular", p,
+                commandType: CommandType.StoredProcedure,
+                cancellationToken: ct));
+        }
+        catch (SqlException ex) when (ex.Number == ErrorDeNegocio)
+        {
+            throw new AppException(ex.Message, 409);
+        }
+    }
+
+    public async Task<int> CambiarPilotoAsync(
+        int idPiloto, IReadOnlyList<int> ids, CancellationToken ct = default)
+    {
+        using var conn = await _factory.CreateAsync(ct);
+
+        var p = new DynamicParameters();
+        p.Add("@id_piloto", idPiloto);
+        p.Add("@ids", TablaIds(ids).AsTableValuedParameter("dbo.tp_gbp_tms_id"));
+
+        try
+        {
+            return await conn.ExecuteScalarAsync<int>(new CommandDefinition(
+                "dbo.usp_gbp_tms_entrega_cambiar_piloto", p,
+                commandType: CommandType.StoredProcedure,
+                cancellationToken: ct));
+        }
+        catch (SqlException ex) when (ex.Number == ErrorDeNegocio)
+        {
+            // El procedimiento ya redactó el motivo y nombró los documentos.
+            throw new AppException(ex.Message, 409);
+        }
+    }
+
+    public Task<int> SacarDeViajeAsync(IReadOnlyList<int> ids, CancellationToken ct = default)
+        => PorLoteAsync("dbo.usp_gbp_tms_entrega_sacar_de_viaje", ids, null, ct);
 
     public Task<int> LiberarAsync(IReadOnlyList<int> ids, CancellationToken ct = default)
         => PorLoteAsync("dbo.usp_gbp_tms_entrega_liberar", ids, null, ct);
@@ -192,42 +261,68 @@ public class EntregaRepository : IEntregaRepository
     /* Las columnas van en el mismo orden que el tipo de tabla: SQL Server las
        empareja por posición, no por nombre, y un orden distinto no da error
        sino datos en la columna equivocada. */
-    private static DataTable TablaEntregas(IReadOnlyList<EntregaSap> filas)
+    private static DataTable TablaOrdenes(IReadOnlyList<EntregaAAsignar> filas)
     {
         var t = new DataTable();
-        t.Columns.Add("sap_doc_entry",   typeof(int));
-        t.Columns.Add("sap_doc_num",     typeof(int));
-        t.Columns.Add("sap_orden_venta", typeof(int));
-        t.Columns.Add("sap_factura_num", typeof(int));
-        t.Columns.Add("cliente_codigo",  typeof(string));
-        t.Columns.Add("cliente_nombre",  typeof(string));
-        t.Columns.Add("direccion",       typeof(string));
-        t.Columns.Add("municipio",       typeof(string));
-        t.Columns.Add("peso_kg",         typeof(decimal));
-        t.Columns.Add("monto",           typeof(decimal));
-        t.Columns.Add("fecha_documento", typeof(DateTime));
+        t.Columns.Add("sap_orden_doc_entry", typeof(int));
+        t.Columns.Add("sap_orden_venta",     typeof(int));
+        t.Columns.Add("sap_doc_entry",       typeof(int));
+        t.Columns.Add("sap_doc_num",         typeof(int));
+        t.Columns.Add("sap_factura_num",     typeof(int));
+        t.Columns.Add("cliente_codigo",      typeof(string));
+        t.Columns.Add("cliente_nombre",      typeof(string));
+        t.Columns.Add("direccion",           typeof(string));
+        t.Columns.Add("municipio",           typeof(string));
+        t.Columns.Add("peso_kg",             typeof(decimal));
+        t.Columns.Add("monto",               typeof(decimal));
+        t.Columns.Add("fecha_documento",     typeof(DateTime));
+        t.Columns.Add("hora_documento",      typeof(TimeSpan));
+        t.Columns.Add("fecha_entrega",       typeof(DateTime));
 
         foreach (var f in filas)
             t.Rows.Add(
-                f.SapDocEntry,
-                f.SapDocNum,
-                (object?)f.SapOrdenVenta ?? DBNull.Value,
-                f.SapFacturaNum,
-                f.ClienteCodigo,
-                f.ClienteNombre,
-                (object?)f.Direccion ?? DBNull.Value,
-                (object?)f.Municipio ?? DBNull.Value,
+                f.SapOrdenDocEntry,
+                f.SapOrdenVenta,
+                (object?)f.SapDocEntry     ?? DBNull.Value,
+                (object?)f.SapDocNum       ?? DBNull.Value,
+                (object?)f.SapFacturaNum   ?? DBNull.Value,
+                Recortar(f.ClienteCodigo, 30),
+                Recortar(f.ClienteNombre, 150) ?? string.Empty,
+                (object?)Recortar(f.Direccion, 300) ?? DBNull.Value,
+                (object?)Recortar(f.Municipio, 80)  ?? DBNull.Value,
                 f.PesoKg,
                 f.Monto,
-                f.FechaDocumento.Date);
+                f.FechaDocumento.Date,
+                (object?)f.HoraDocumento        ?? DBNull.Value,
+                (object?)f.FechaEntrega?.Date   ?? DBNull.Value);
 
         return t;
     }
 
-    private static DataTable TablaLineas(IReadOnlyList<EntregaSap> filas)
+    private static DataTable TablaVinculos(IReadOnlyList<VinculoEntrega> filas)
     {
         var t = new DataTable();
-        t.Columns.Add("sap_doc_entry",   typeof(int));
+        t.Columns.Add("sap_orden_doc_entry", typeof(int));
+        t.Columns.Add("sap_doc_entry",       typeof(int));
+        t.Columns.Add("sap_doc_num",         typeof(int));
+        t.Columns.Add("sap_factura_num",     typeof(int));
+        t.Columns.Add("anulada",             typeof(bool));
+
+        foreach (var f in filas)
+            t.Rows.Add(
+                f.SapOrdenDocEntry,
+                f.SapDocEntry,
+                f.SapDocNum,
+                (object?)f.SapFacturaNum ?? DBNull.Value,
+                f.Anulada);
+
+        return t;
+    }
+
+    private static DataTable TablaLineas(IReadOnlyList<EntregaAAsignar> filas)
+    {
+        var t = new DataTable();
+        t.Columns.Add("sap_orden_doc_entry", typeof(int));
         t.Columns.Add("linea_num",       typeof(int));
         t.Columns.Add("codigo_articulo", typeof(string));
         t.Columns.Add("codigo_barras",   typeof(string));
@@ -239,7 +334,7 @@ public class EntregaRepository : IEntregaRepository
         foreach (var e in filas)
             foreach (var l in e.Lineas)
                 t.Rows.Add(
-                    e.SapDocEntry,
+                    e.SapOrdenDocEntry,
                     l.LineaNum,
                     Recortar(l.CodigoArticulo, 50),
                     (object?)Recortar(l.CodigoBarras, 50) ?? DBNull.Value,
@@ -268,17 +363,20 @@ public class EntregaRepository : IEntregaRepository
     private sealed class Fila
     {
         public int       total             { get; init; }
-        public int       id_entrega        { get; init; }
-        public int       sap_doc_entry     { get; init; }
-        public int       sap_doc_num       { get; init; }
-        public int?      sap_orden_venta   { get; init; }
-        public int       sap_factura_num   { get; init; }
+        public int        id_entrega          { get; init; }
+        public int?       sap_doc_entry       { get; init; }
+        public int?       sap_doc_num         { get; init; }
+        public int?       sap_orden_doc_entry { get; init; }
+        public int?       sap_orden_venta     { get; init; }
+        public int?       sap_factura_num     { get; init; }
         public string    cliente_codigo    { get; init; } = string.Empty;
         public string    cliente_nombre    { get; init; } = string.Empty;
         public string?   direccion         { get; init; }
         public string?   municipio         { get; init; }
         public decimal   peso_kg           { get; init; }
         public DateTime  fecha_documento   { get; init; }
+        public TimeSpan? hora_documento    { get; init; }
+        public DateTime? fecha_entrega     { get; init; }
         public string    estado            { get; init; } = string.Empty;
         public int?      id_viaje          { get; init; }
         public int?      secuencia         { get; init; }
@@ -296,17 +394,20 @@ public class EntregaRepository : IEntregaRepository
 
     private sealed class FilaDetalle
     {
-        public int       id_entrega        { get; init; }
-        public int       sap_doc_entry     { get; init; }
-        public int       sap_doc_num       { get; init; }
-        public int?      sap_orden_venta   { get; init; }
-        public int       sap_factura_num   { get; init; }
+        public int        id_entrega          { get; init; }
+        public int?       sap_doc_entry       { get; init; }
+        public int?       sap_doc_num         { get; init; }
+        public int?       sap_orden_doc_entry { get; init; }
+        public int?       sap_orden_venta     { get; init; }
+        public int?       sap_factura_num     { get; init; }
         public string    cliente_codigo    { get; init; } = string.Empty;
         public string    cliente_nombre    { get; init; } = string.Empty;
         public string?   direccion         { get; init; }
         public string?   municipio         { get; init; }
         public decimal   peso_kg           { get; init; }
         public DateTime  fecha_documento   { get; init; }
+        public TimeSpan? hora_documento    { get; init; }
+        public DateTime? fecha_entrega     { get; init; }
         public string    estado            { get; init; } = string.Empty;
         public int?      id_viaje          { get; init; }
         public int?      secuencia         { get; init; }
@@ -325,6 +426,15 @@ public class EntregaRepository : IEntregaRepository
         public string?   viaje_estado      { get; init; }
         public string?   unidad_codigo     { get; init; }
         public string?   unidad_placa      { get; init; }
+    }
+
+    private sealed class FilaPendiente
+    {
+        public int      id_entrega          { get; init; }
+        public int      sap_orden_doc_entry { get; init; }
+        public int      sap_orden_venta     { get; init; }
+        public string   cliente_codigo      { get; init; } = string.Empty;
+        public DateTime fecha_documento     { get; init; }
     }
 
     private sealed class FilaProducto

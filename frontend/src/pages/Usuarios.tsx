@@ -4,6 +4,7 @@ import { usuariosApi, type UsuarioLista } from '@/api/usuarios'
 import { fmtFecha, fmtHora } from '@/utils/fechas'
 import Icon from '@/components/Icon'
 import PageHeader from '@/components/PageHeader'
+import Confirmar from '@/components/Confirmar'
 import Modal from '@/components/Modal'
 import FormUsuario from '@/components/FormUsuario'
 import FormPassword from '@/components/FormPassword'
@@ -28,6 +29,11 @@ export default function Usuarios() {
   const roles = useQuery({ queryKey: ['roles'], queryFn: () => usuariosApi.roles() })
 
   const refrescar = () => qc.invalidateQueries({ queryKey: ['usuarios'] })
+
+  /* Usuario cuyo acceso se está por activar o desactivar, mientras se
+     pregunta. Desactivar deja a alguien fuera del sistema; no es un clic
+     que deba resolverse solo. */
+  const [alternando, setAlternando] = useState<UsuarioLista | null>(null)
 
   const alternarEstado = useMutation({
     mutationFn: (u: UsuarioLista) =>
@@ -177,7 +183,7 @@ export default function Usuarios() {
                         <Icon name="key" size={18} />
                       </button>
                       <button
-                        onClick={() => alternarEstado.mutate(u)}
+                        onClick={() => setAlternando(u)}
                         disabled={alternarEstado.isPending}
                         title={u.activo ? 'Desactivar' : 'Activar'}
                         className="p-xs rounded-lg text-ink-faint hover:text-accent-soft hover:bg-elevated/50 transition-colors disabled:opacity-40"
@@ -243,6 +249,23 @@ export default function Usuarios() {
             onCancelar={() => setCambiandoClave(null)}
           />
         </Modal>
+      )}
+
+      {alternando && (
+        <Confirmar
+          titulo={alternando.activo ? 'Desactivar usuario' : 'Activar usuario'}
+          tono={alternando.activo ? 'danger' : 'accent'}
+          textoAceptar={alternando.activo ? 'Sí, desactivar' : 'Sí, activar'}
+          mensaje={
+            alternando.activo
+              ? `${alternando.nombre} dejará de poder entrar al sistema.`
+              : `${alternando.nombre} podrá volver a entrar al sistema.`
+          }
+          detalle={`Usuario ${alternando.usuario}`}
+          cargando={alternarEstado.isPending}
+          onConfirmar={() => { const u = alternando; setAlternando(null); alternarEstado.mutate(u) }}
+          onCancelar={() => setAlternando(null)}
+        />
       )}
     </>
   )

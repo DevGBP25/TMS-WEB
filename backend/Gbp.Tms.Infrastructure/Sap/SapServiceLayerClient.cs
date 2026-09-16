@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -76,23 +77,70 @@ public class SapServiceLayerClient : ISapServiceLayerClient
         _log.LogInformation(
             "Órdenes de venta {Desde:d}–{Hasta:d}: {N} leídas de SAP.", desde, hasta, docs.Count);
 
-        return docs.Select(o => new OrdenSap(
-            SapDocEntry:    o.DocEntry,
-            SapDocNum:      o.DocNum,
-            FechaDocumento: o.DocDate,
-            ClienteCodigo:  o.CardCode ?? string.Empty,
-            ClienteNombre:  o.CardName ?? string.Empty,
-            Direccion:      o.Address,
-            Municipio:      o.AddressExtension?.ShipToCity,
-            Monto:          o.DocTotal,
-            Comentarios:    string.IsNullOrWhiteSpace(o.Comments) ? null : o.Comments.Trim(),
-            /* bost_Close significa que la orden ya se copió por completo a su
-               documento destino. En esta operación ese destino es la entrega,
-               así que es lo más cercano a "ya tiene entrega" que se puede
-               saber sin bajar las líneas de todas las entregas del rango. */
-            Cerrada:        string.Equals(o.DocumentStatus, "bost_Close", StringComparison.OrdinalIgnoreCase),
-            Anulada:        string.Equals(o.Cancelled, "tYES", StringComparison.OrdinalIgnoreCase)))
-            .ToList();
+        return docs.Select(OrdenDe).ToList();
+    }
+
+    public async Task<IReadOnlyList<OrdenSap>> OrdenesConLineasAsync(
+        IReadOnlyList<int> docEntries, CancellationToken ct = default)
+    {
+        var buscadas = docEntries.Where(d => d > 0).Distinct().ToList();
+        if (buscadas.Count == 0) return [];
+
+        var todo = new List<SapOrder>();
+
+        /* En tandas porque el filtro va en la URL y el Service Layer corta
+           las largas. Veinticinco documentos por consulta es lo que aguanta
+           con holgura. */
+        const int tanda = 25;
+
+        for (var i = 0; i < buscadas.Count; i += tanda)
+        {
+            var filtro = string.Join(" or ", buscadas.Skip(i).Take(tanda).Select(d => $"DocEntry eq {d}"));
+
+            todo.AddRange(await LeerTodoAsync<SapOrder>(
+                ConsultaOrdenConLineas + $"&$filter={Uri.EscapeDataString(filtro)}", ct));
+        }
+
+        _log.LogInformation("Órdenes con productos: {N} de {Pedidas} pedidas.", todo.Count, buscadas.Count);
+
+        return todo.Select(OrdenDe).ToList();
+    }
+
+    private static OrdenSap OrdenDe(SapOrder o) => new(
+        SapDocEntry:    o.DocEntry,
+        SapDocNum:      o.DocNum,
+        FechaDocumento: o.DocDate,
+        HoraDocumento:  HoraDe(o.DocTime),
+        FechaEntrega:   o.DocDueDate,
+        ClienteCodigo:  o.CardCode ?? string.Empty,
+        ClienteNombre:  o.CardName ?? string.Empty,
+        Direccion:      o.Address,
+        Municipio:      o.AddressExtension?.ShipToCity,
+        Monto:          o.DocTotal,
+        Comentarios:    string.IsNullOrWhiteSpace(o.Comments) ? null : o.Comments.Trim(),
+        /* bost_Close significa que la orden ya se copió por completo a su
+           documento destino. En esta operación ese destino es la entrega,
+           así que es lo más cercano a "ya tiene entrega" que se puede
+           saber sin bajar las líneas de todas las entregas del rango. */
+        Cerrada:        string.Equals(o.DocumentStatus, "bost_Close", StringComparison.OrdinalIgnoreCase),
+        Anulada:        string.Equals(o.Cancelled, "tYES", StringComparison.OrdinalIgnoreCase),
+        Lineas:         o.DocumentLines.Select(ProductoDe).ToList());
+
+    /// <summary>
+    /// La hora del documento. Llega como "11:12:00", pero hay instalaciones
+    /// que la mandan como número (1112): si no se entiende, se prefiere no
+    /// mostrar hora antes que mostrar una inventada.
+    /// </summary>
+    private static TimeSpan? HoraDe(string? doctime)
+    {
+        if (string.IsNullOrWhiteSpace(doctime)) return null;
+
+        if (TimeSpan.TryParse(doctime, CultureInfo.InvariantCulture, out var h)) return h;
+
+        if (int.TryParse(doctime, out var n) && n is >= 0 and <= 2359)
+            return new TimeSpan(n / 100, n % 100, 0);
+
+        return null;
     }
 
     public async Task<IReadOnlyList<EntregaSap>> EntregasDeOrdenesAsync(
@@ -156,8 +204,13 @@ public class SapServiceLayerClient : ISapServiceLayerClient
 
     /* La orden se pide sin líneas: es lo que mantiene el listado en segundos. */
     private const string ConsultaOrden =
-        "Orders?$select=DocEntry,DocNum,DocDate,CardCode,CardName,Address," +
+        "Orders?$select=DocEntry,DocNum,DocDate,DocTime,DocDueDate,CardCode,CardName,Address," +
         "DocTotal,Cancelled,DocumentStatus,Comments,AddressExtension";
+
+    /* La misma consulta con las líneas. Sólo se usa para las órdenes que ya
+       se eligieron: pedir DocumentLines para un rango entero cuesta veinte
+       segundos, pedirlo para diez documentos no se nota. */
+    private const string ConsultaOrdenConLineas = ConsultaOrden + ",DocumentLines";
 
     /* La entrega sí las trae: son los productos que va a llevar el piloto. */
     private const string Consulta =
@@ -458,9 +511,13 @@ public class SapServiceLayerClient : ISapServiceLayerClient
 
     private class SapOrder
     {
-        public int      DocEntry       { get; set; }
-        public int      DocNum         { get; set; }
-        public DateTime DocDate        { get; set; }
+        public int       DocEntry      { get; set; }
+        public int       DocNum        { get; set; }
+        public DateTime  DocDate       { get; set; }
+        /// <summary>Hora del documento, como "11:12:00".</summary>
+        public string?   DocTime       { get; set; }
+        /// <summary>Fecha de entrega comprometida.</summary>
+        public DateTime? DocDueDate    { get; set; }
         public string?  CardCode       { get; set; }
         public string?  CardName       { get; set; }
         public string?  Address        { get; set; }
@@ -471,6 +528,9 @@ public class SapServiceLayerClient : ISapServiceLayerClient
         public string?  Comments       { get; set; }
 
         public SapAddressExtension? AddressExtension { get; set; }
+
+        /// <summary>Sólo llega cuando se piden a propósito.</summary>
+        public List<SapDocumentLine> DocumentLines { get; set; } = [];
     }
 
     private class SapAddressExtension

@@ -14,6 +14,7 @@ import { useAuth } from '@/auth/AuthContext'
 import { fmtFecha, fmtHora, fmtNum } from '@/utils/fechas'
 import Chip from '@/components/Chip'
 import Icon from '@/components/Icon'
+import Confirmar from '@/components/Confirmar'
 import Modal from '@/components/Modal'
 import PageHeader from '@/components/PageHeader'
 
@@ -47,12 +48,20 @@ export default function ViajeDetalle() {
       setError(e instanceof ApiError ? e.message : 'No se pudo cambiar el estado.'),
   })
 
+  /* Sacar del viaje no es desasignar: la boleta se queda con su piloto y
+     sus productos, sólo deja de ir en este camión. Antes esta equis llamaba
+     a liberar, que borra la fila y la devuelve a SAP. */
   const quitar = useMutation({
-    mutationFn: (idEntrega: number) => entregasApi.liberar([idEntrega]),
+    mutationFn: (idEntrega: number) => entregasApi.sacarDeViaje([idEntrega]),
     onSuccess: () => { setError(null); refrescar() },
     onError: (e) =>
-      setError(e instanceof ApiError ? e.message : 'No se pudo quitar la entrega.'),
+      setError(e instanceof ApiError ? e.message : 'No se pudo quitar la entrega del viaje.'),
   })
+
+  /* Lo que se está por hacer mientras se pregunta: un estado de viaje al que
+     pasar, o la boleta que se saca. */
+  const [aEstado, setAEstado] = useState<EstadoViaje | null>(null)
+  const [aQuitar, setAQuitar] = useState<{ id: number; numero: string } | null>(null)
 
   if (detalle.isLoading) {
     return <p className="py-2xl text-center text-ink-faint">Cargando viaje…</p>
@@ -87,7 +96,7 @@ export default function ViajeDetalle() {
             <button
               key={s}
               className={s === 'CANCELADO' ? 'btn-ghost' : 'btn-accent'}
-              onClick={() => cambiar.mutate(s)}
+              onClick={() => setAEstado(s)}
               disabled={cambiar.isPending}
             >
               <Icon name={ICONO[s]} size={18} />
@@ -226,7 +235,10 @@ export default function ViajeDetalle() {
               {entregas.map((e) => (
                 <tr key={e.idEntrega} className="hover:bg-field transition-colors">
                   <td className="py-md px-md text-ink-faint tabular">{e.secuencia ?? '—'}</td>
-                  <td className="py-md px-md font-medium text-ink tabular">{e.sapDocNum}</td>
+                  {/* Sin boleta todavía, la orden es el número que existe. */}
+                  <td className="py-md px-md font-medium text-ink tabular">
+                    {e.sapDocNum ?? `OV ${e.sapOrdenVenta}`}
+                  </td>
                   <td className="py-md px-md text-ink-muted tabular hidden lg:table-cell">
                     {e.sapOrdenVenta ?? '—'}
                   </td>
@@ -264,10 +276,15 @@ export default function ViajeDetalle() {
                   {puedeOperar && editable && (
                     <td className="py-md px-md text-right">
                       <button
-                        onClick={() => quitar.mutate(e.idEntrega)}
+                        onClick={() =>
+                          setAQuitar({
+                            id: e.idEntrega,
+                            numero: String(e.sapDocNum ?? `OV ${e.sapOrdenVenta}`),
+                          })
+                        }
                         disabled={quitar.isPending}
                         className="text-ink-faint hover:text-danger transition-colors"
-                        aria-label={`Quitar la boleta ${e.sapDocNum} del viaje`}
+                        aria-label={`Quitar la boleta ${e.sapDocNum ?? e.sapOrdenVenta} del viaje`}
                       >
                         <Icon name="close" size={16} />
                       </button>
@@ -290,6 +307,31 @@ export default function ViajeDetalle() {
           onListo={() => { setAsignando(false); setError(null); refrescar() }}
         />
       )}
+
+      {aEstado && (
+        <Confirmar
+          titulo={ACCION[aEstado]}
+          tono={aEstado === 'CANCELADO' || aEstado === 'EN_RUTA' ? 'danger' : 'accent'}
+          textoAceptar={`Sí, ${ACCION[aEstado].toLowerCase()}`}
+          mensaje={AVISO[aEstado](v.numero, entregas.length)}
+          detalle={`Viaje ${v.numero} · ${entregas.length} boleta(s)`}
+          cargando={cambiar.isPending}
+          onConfirmar={() => { const e = aEstado; setAEstado(null); cambiar.mutate(e) }}
+          onCancelar={() => setAEstado(null)}
+        />
+      )}
+
+      {aQuitar && (
+        <Confirmar
+          titulo="Quitar del viaje"
+          textoAceptar="Sí, quitar"
+          mensaje={`La boleta ${aQuitar.numero} saldrá de este viaje.`}
+          detalle="Sigue asignada a su piloto y se puede agrupar en otro viaje."
+          cargando={quitar.isPending}
+          onConfirmar={() => { const q = aQuitar; setAQuitar(null); quitar.mutate(q.id) }}
+          onCancelar={() => setAQuitar(null)}
+        />
+      )}
     </div>
   )
 }
@@ -301,6 +343,22 @@ const ACCION: Record<EstadoViaje, string> = {
   ENTREGADO: 'Cerrar viaje',
   LIQUIDADO: 'Liquidar',
   CANCELADO: 'Cancelar',
+}
+
+/* Qué significa cada paso, en la frase que el supervisor necesita leer antes
+   de aceptar. Despachar y cancelar son los que mueven mercadería y por eso
+   dicen la consecuencia completa. */
+const AVISO: Record<EstadoViaje, (numero: string, boletas: number) => string> = {
+  PLANIFICADO: (n) => `El viaje ${n} volverá a planificado y podrá cambiarse su carga.`,
+  ASIGNADO: (n) => `El viaje ${n} quedará listo para despacharse.`,
+  EN_RUTA: (n, b) =>
+    `El viaje ${n} sale a la calle con sus ${b} boleta(s), que pasarán a estado En ruta. ` +
+    'Después ya no se le puede cambiar la carga.',
+  ENTREGADO: (n) => `El viaje ${n} se dará por terminado.`,
+  LIQUIDADO: (n) => `El viaje ${n} quedará liquidado.`,
+  CANCELADO: (n, b) =>
+    `Se cancelará el viaje ${n}. Sus ${b} boleta(s) vuelven a quedar sin viaje, ` +
+    'con su piloto, para armar otro.',
 }
 
 const ICONO: Record<EstadoViaje, string> = {

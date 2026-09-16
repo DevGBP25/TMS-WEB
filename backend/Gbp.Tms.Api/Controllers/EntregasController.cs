@@ -116,6 +116,54 @@ public class EntregasController : ControllerBase
     }
 
     /// <summary>
+    /// Completa las boletas que se repartieron antes de que SAP generara su
+    /// entrega: les pone el número de boleta y la factura cuando ya existen.
+    ///
+    /// Va aparte y no dentro del listado porque consulta SAP con las líneas,
+    /// que es la parte cara: se ejecuta cuando el supervisor lo pide, no en
+    /// cada apertura de la pantalla.
+    /// </summary>
+    [HttpPost("vincular")]
+    [Authorize(Roles = Operadores)]
+    [ProducesResponseType(typeof(RespuestaEntregas), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RespuestaEntregas>> Vincular(
+        [FromQuery] int dias = 30, CancellationToken ct = default)
+    {
+        var n = await _entregas.VincularAsync(dias, ct);
+        return Ok(new RespuestaEntregas { Afectadas = n });
+    }
+
+    /// <summary>
+    /// Pasa boletas ya repartidas a otro piloto, sin devolverlas a SAP ni
+    /// perder sus productos.
+    /// </summary>
+    [HttpPost("cambiar-piloto")]
+    [Authorize(Roles = Operadores)]
+    [ProducesResponseType(typeof(RespuestaEntregas), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(RespuestaError), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<RespuestaEntregas>> CambiarPiloto(
+        [FromBody] CambiarPilotoRequest req, CancellationToken ct)
+    {
+        var n = await _entregas.CambiarPilotoAsync(req, ct);
+        return Ok(new RespuestaEntregas { Afectadas = n });
+    }
+
+    /// <summary>
+    /// Saca boletas de su viaje sin desasignarlas: conservan piloto y
+    /// productos, y quedan disponibles para armar otro viaje.
+    /// </summary>
+    [HttpPost("sacar-de-viaje")]
+    [Authorize(Roles = Operadores)]
+    [ProducesResponseType(typeof(RespuestaEntregas), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(RespuestaError), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<RespuestaEntregas>> SacarDeViaje(
+        [FromBody] IdsRequest req, CancellationToken ct)
+    {
+        var n = await _entregas.SacarDeViajeAsync(req, ct);
+        return Ok(new RespuestaEntregas { Afectadas = n });
+    }
+
+    /// <summary>
     /// Libera boletas: se borran del TMS y vuelven a aparecer en la lista de
     /// disponibles. Sólo antes de salir; después, un cambio es un rechazo y
     /// lo registra el piloto desde la aplicación móvil.

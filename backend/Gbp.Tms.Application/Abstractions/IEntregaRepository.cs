@@ -4,6 +4,44 @@ using Gbp.Tms.Application.Entregas.Dtos;
 namespace Gbp.Tms.Application.Abstractions;
 
 /// <summary>
+/// Una boleta a punto de nacer. Nace de la orden de venta, que es lo único
+/// que existe con seguridad cuando el supervisor reparte: la entrega y la
+/// factura pueden llegar días después y por eso van en nulo.
+/// </summary>
+public record EntregaAAsignar(
+    int       SapOrdenDocEntry,
+    int       SapOrdenVenta,
+    int?      SapDocEntry,
+    int?      SapDocNum,
+    int?      SapFacturaNum,
+    string    ClienteCodigo,
+    string    ClienteNombre,
+    string?   Direccion,
+    string?   Municipio,
+    decimal   PesoKg,
+    decimal   Monto,
+    DateTime  FechaDocumento,
+    TimeSpan? HoraDocumento,
+    DateTime? FechaEntrega,
+    IReadOnlyList<LineaSap> Lineas);
+
+/// <summary>Lo que SAP terminó generando para una orden ya repartida.</summary>
+public record VinculoEntrega(
+    int  SapOrdenDocEntry,
+    int  SapDocEntry,
+    int  SapDocNum,
+    int? SapFacturaNum,
+    bool Anulada);
+
+/// <summary>Boleta repartida a la que todavía le falta su entrega o su factura.</summary>
+public record PendienteDeBoleta(
+    int      IdEntrega,
+    int      SapOrdenDocEntry,
+    int      SapOrdenVenta,
+    string   ClienteCodigo,
+    DateTime FechaDocumento);
+
+/// <summary>
 /// Lo que el TMS administra: boletas que ya tienen piloto.
 ///
 /// Lo que todavía no se asignó no pasa por aquí —vive en SAP— así que este
@@ -36,7 +74,31 @@ public interface IEntregaRepository
     /// Todo el grupo o ninguno.
     /// </summary>
     Task<int> AsignarPilotoAsync(
-        int idPiloto, IReadOnlyList<EntregaSap> entregas, CancellationToken ct = default);
+        int idPiloto, IReadOnlyList<EntregaAAsignar> boletas, CancellationToken ct = default);
+
+    /// <summary>Las que se repartieron antes de que SAP generara la entrega.</summary>
+    Task<IReadOnlyList<PendienteDeBoleta>> PendientesDeBoletaAsync(
+        int dias, CancellationToken ct = default);
+
+    /// <summary>
+    /// Completa esas boletas con la entrega y la factura que SAP ya emitió.
+    /// Es lo que cierra el círculo de planificar con anticipación.
+    /// </summary>
+    Task<int> VincularAsync(
+        IReadOnlyList<VinculoEntrega> vinculos, CancellationToken ct = default);
+
+    /// <summary>
+    /// Pasa boletas ya repartidas a otro piloto. La boleta es la misma: sólo
+    /// cambia de manos.
+    /// </summary>
+    Task<int> CambiarPilotoAsync(
+        int idPiloto, IReadOnlyList<int> ids, CancellationToken ct = default);
+
+    /// <summary>
+    /// Saca boletas de su viaje sin desasignarlas: conservan piloto y
+    /// productos. Es el paso intermedio para reacomodar un viaje.
+    /// </summary>
+    Task<int> SacarDeViajeAsync(IReadOnlyList<int> ids, CancellationToken ct = default);
 
     /// <summary>Borra la fila: la boleta vuelve a la lista de disponibles de SAP.</summary>
     Task<int> LiberarAsync(IReadOnlyList<int> ids, CancellationToken ct = default);

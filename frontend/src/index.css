@@ -291,6 +291,35 @@
     cursor: not-allowed;
   }
 
+  /* Para lo que borra o saca mercadería a la calle: el color avisa antes de
+     que se lea el texto del botón. El fondo es tenue y el borde firme, que
+     en tema oscuro un relleno saturado grita más de la cuenta. */
+  .btn-danger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+    border: 1px solid var(--color-danger);
+    background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+    color: var(--color-danger);
+    border-radius: var(--radius-xl);
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+    transition: box-shadow 0.2s, opacity 0.2s, background-color 0.2s;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-danger) 28%, transparent);
+  }
+
+  .btn-danger:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
   .btn-ghost {
     display: inline-flex;
     align-items: center;

@@ -74,7 +74,7 @@ public class EntregaService
             .OrderByDescending(o => o.FechaDocumento)
             .ThenByDescending(o => o.SapDocNum)
             .Select(o => new OrdenDisponibleDto(
-                o.SapDocEntry, o.SapDocNum, o.FechaDocumento,
+                o.SapDocEntry, o.SapDocNum, o.FechaDocumento, o.HoraDocumento, o.FechaEntrega,
                 o.ClienteCodigo, o.ClienteNombre, o.Direccion, o.Municipio,
                 o.Comentarios, o.Cerrada))
             .ToList();
@@ -126,72 +126,163 @@ public class EntregaService
         => _repo.ResumenAsync(ct);
 
     /// <summary>
-    /// Reparte las órdenes seleccionadas: busca la entrega de cada una en SAP
-    /// y la guarda con el piloto puesto.
+    /// Reparte las órdenes seleccionadas entre los pilotos.
+    ///
+    /// La fila nace de la orden, no de la entrega: los viajes se arman uno o
+    /// más días antes del despacho, cuando SAP todavía no generó la boleta ni
+    /// la factura. Si ya existen, se guardan de una vez; si no, quedan en
+    /// nulo y las completa <see cref="VincularAsync"/> más adelante.
     ///
     /// Lo que se guarda se relee de SAP en este momento, no se toma de la
     /// pantalla: entre que el supervisor abrió la lista y pulsó el botón
-    /// pudieron facturar, anular o cambiar la dirección.
+    /// pudieron anular la orden o cambiar la dirección.
     /// </summary>
     public async Task<int> AsignarPilotoAsync(
         AsignarPilotoRequest req, CancellationToken ct = default)
     {
         var ordenes = Depurar(req.SapDocEntries);
 
-        /* Hay que saber de qué días son las órdenes para acotar la búsqueda de
-           sus entregas. Releerlas cuesta un par de segundos y evita barrer
-           semanas de documentos. */
-        var (inicio, fin) = Rango(null, null);
-        var todas = await _sap.OrdenesDeRangoAsync(inicio, fin, ct);
-
-        var elegidas = todas.Where(o => ordenes.Contains(o.SapDocEntry)).ToList();
+        /* Aquí sí se piden las líneas: son pocos documentos y son justamente
+           los productos que el piloto va a llevar. */
+        var elegidas = await _sap.OrdenesConLineasAsync(ordenes, ct);
 
         if (elegidas.Count == 0)
             throw new AppException(
                 "Las órdenes seleccionadas ya no aparecen en SAP. Actualice la lista.", 409);
 
-        var desdeDoc = elegidas.Min(o => o.FechaDocumento).Date;
-        var hastaDoc = elegidas.Max(o => o.FechaDocumento).Date.AddDays(MargenEntrega);
-
-        var clientes = elegidas.Select(o => o.ClienteCodigo).Distinct().ToList();
-
-        var entregas = await _sap.EntregasDeOrdenesAsync(ordenes, clientes, desdeDoc, hastaDoc, ct);
-
-        var conEntrega = entregas.Select(e => e.SapOrdenVentaDocEntry).OfType<int>().ToHashSet();
-
-        var sinEntrega = elegidas
-            .Where(o => !conEntrega.Contains(o.SapDocEntry))
-            .Select(o => o.SapDocNum)
-            .ToList();
-
-        if (sinEntrega.Count > 0)
-            throw new AppException(
-                $"Estas órdenes todavía no tienen entrega en SAP: {string.Join(", ", sinEntrega)}.", 409);
-
-        var anuladas = entregas.Where(e => e.Anulada).Select(e => e.SapDocNum).ToList();
+        var anuladas = elegidas.Where(o => o.Anulada).Select(o => o.SapDocNum).ToList();
         if (anuladas.Count > 0)
             throw new AppException(
-                $"Estas entregas fueron anuladas en SAP: {string.Join(", ", anuladas)}.", 409);
+                $"Estas órdenes fueron anuladas en SAP: {string.Join(", ", anuladas)}.", 409);
 
-        /* La regla del negocio: sin factura no sale mercadería. Se comprueba
-           aquí y otra vez en el procedimiento, que es por donde pasan todos
-           los caminos. */
-        var sinFactura = entregas.Where(e => e.SapFacturaNum is null).Select(e => e.SapDocNum).ToList();
-        if (sinFactura.Count > 0)
-            throw new AppException(
-                $"Estas entregas todavía no tienen factura: {string.Join(", ", sinFactura)}.", 409);
+        /* Las entregas que ya existan. Se busca acotando por los clientes de
+           las órdenes elegidas; sin ese filtro habría que barrer semanas de
+           documentos con todas sus líneas. */
+        var porOrden = await EntregasDeAsync(elegidas.Select(
+            o => (o.SapDocEntry, o.ClienteCodigo, o.FechaDocumento)).ToList(), ct);
 
-        var n = await _repo.AsignarPilotoAsync(req.IdPiloto, entregas, ct);
+        var boletas = elegidas.Select(o =>
+        {
+            porOrden.TryGetValue(o.SapDocEntry, out var entrega);
+
+            return new EntregaAAsignar(
+                SapOrdenDocEntry: o.SapDocEntry,
+                SapOrdenVenta:    o.SapDocNum,
+                SapDocEntry:      entrega?.SapDocEntry,
+                SapDocNum:        entrega?.SapDocNum,
+                SapFacturaNum:    entrega?.SapFacturaNum,
+                ClienteCodigo:    o.ClienteCodigo,
+                ClienteNombre:    o.ClienteNombre,
+                /* Se prefiere el destino de la entrega cuando existe: es el
+                   que el piloto va a usar, y puede diferir del de la orden. */
+                Direccion:        entrega?.Direccion ?? o.Direccion,
+                Municipio:        entrega?.Municipio ?? o.Municipio,
+                PesoKg:           entrega?.PesoKg ?? 0m,
+                Monto:            o.Monto,
+                FechaDocumento:   o.FechaDocumento,
+                HoraDocumento:    o.HoraDocumento,
+                FechaEntrega:     o.FechaEntrega,
+                /* Los productos de la entrega cuando la hay: son los que de
+                   verdad salieron. Si no, los de la orden. */
+                Lineas:           entrega is not null && entrega.Lineas.Count > 0
+                                      ? entrega.Lineas
+                                      : o.Lineas);
+        }).ToList();
+
+        var n = await _repo.AsignarPilotoAsync(req.IdPiloto, boletas, ct);
 
         _log.LogInformation(
-            "{N} entrega(s) de {O} orden(es) asignadas al piloto {Piloto}.",
-            n, elegidas.Count, req.IdPiloto);
+            "{N} orden(es) asignadas al piloto {Piloto}; {Con} ya tenían boleta en SAP.",
+            n, req.IdPiloto, boletas.Count(b => b.SapDocEntry is not null));
 
         return n;
     }
 
+    /// <summary>
+    /// Completa las boletas que se repartieron antes de que SAP generara la
+    /// entrega. Es la otra mitad de planificar con anticipación: sin esto,
+    /// una boleta planificada nunca sabría su número ni su factura.
+    /// </summary>
+    public async Task<int> VincularAsync(int dias = 30, CancellationToken ct = default)
+    {
+        var pendientes = await _repo.PendientesDeBoletaAsync(dias, ct);
+
+        if (pendientes.Count == 0) return 0;
+
+        var porOrden = await EntregasDeAsync(pendientes.Select(
+            p => (p.SapOrdenDocEntry, p.ClienteCodigo, p.FechaDocumento)).ToList(), ct);
+
+        var vinculos = pendientes
+            .Where(p => porOrden.ContainsKey(p.SapOrdenDocEntry))
+            .Select(p =>
+            {
+                var e = porOrden[p.SapOrdenDocEntry];
+                return new VinculoEntrega(
+                    p.SapOrdenDocEntry, e.SapDocEntry, e.SapDocNum, e.SapFacturaNum, e.Anulada);
+            })
+            .ToList();
+
+        if (vinculos.Count == 0)
+        {
+            _log.LogInformation(
+                "Vincular: {N} boleta(s) pendientes y ninguna con entrega todavía en SAP.",
+                pendientes.Count);
+            return 0;
+        }
+
+        var n = await _repo.VincularAsync(vinculos, ct);
+
+        _log.LogInformation(
+            "Vincular: {N} de {Pendientes} boleta(s) completadas con su entrega.",
+            n, pendientes.Count);
+
+        return n;
+    }
+
+    /// <summary>
+    /// Busca en SAP las entregas de esas órdenes y las devuelve indizadas por
+    /// la orden de la que nacieron. Acota por cliente y por fecha porque es lo
+    /// único que hace la consulta soportable: con las líneas incluidas, una
+    /// semana entera son cuarenta megas.
+    /// </summary>
+    private async Task<Dictionary<int, EntregaSap>> EntregasDeAsync(
+        IReadOnlyList<(int DocEntry, string Cliente, DateTime Fecha)> ordenes,
+        CancellationToken ct)
+    {
+        if (ordenes.Count == 0) return [];
+
+        var desde = ordenes.Min(o => o.Fecha).Date;
+        var hasta = ordenes.Max(o => o.Fecha).Date.AddDays(MargenEntrega);
+
+        var clientes = ordenes.Select(o => o.Cliente).Where(c => !string.IsNullOrWhiteSpace(c))
+                              .Distinct().ToList();
+
+        var entregas = await _sap.EntregasDeOrdenesAsync(
+            ordenes.Select(o => o.DocEntry).ToList(), clientes, desde, hasta, ct);
+
+        /* Una orden puede tener más de una entrega si la despacharon en
+           partes. Se queda la primera; el resto se verá al abrir el detalle
+           en SAP, que es donde esa distinción importa. */
+        return entregas
+            .Where(e => e.SapOrdenVentaDocEntry is not null)
+            .GroupBy(e => e.SapOrdenVentaDocEntry!.Value)
+            .ToDictionary(g => g.Key, g => g.OrderBy(e => e.SapDocNum).First());
+    }
+
     /// <summary>Días después de la orden en los que se busca su entrega.</summary>
     private const int MargenEntrega = 15;
+
+    /// <summary>
+    /// Cambia de piloto boletas que ya están repartidas. Es lo que ocurre a
+    /// diario: alguien se enferma o la ruta se reacomoda, y la boleta no
+    /// tiene por qué volver a SAP para eso.
+    /// </summary>
+    public Task<int> CambiarPilotoAsync(CambiarPilotoRequest req, CancellationToken ct = default)
+        => _repo.CambiarPilotoAsync(req.IdPiloto, Depurar(req.Ids), ct);
+
+    /// <summary>Saca boletas del viaje; siguen siendo del mismo piloto.</summary>
+    public Task<int> SacarDeViajeAsync(IdsRequest req, CancellationToken ct = default)
+        => _repo.SacarDeViajeAsync(Depurar(req.Ids), ct);
 
     public Task<int> LiberarAsync(IdsRequest req, CancellationToken ct = default)
         => _repo.LiberarAsync(Depurar(req.Ids), ct);

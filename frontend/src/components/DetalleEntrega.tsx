@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { ETIQUETA_ENTREGA, entregasApi } from '@/api/entregas'
 import { ApiError } from '@/api/client'
-import { fmtFecha, fmtHora } from '@/utils/fechas'
+import { fmtFecha, fmtFechaHora, fmtHora } from '@/utils/fechas'
 import Chip from './Chip'
 import Modal from './Modal'
 import TablaProductos from './TablaProductos'
@@ -23,7 +23,7 @@ export default function DetalleEntrega({ idEntrega, onCerrar }: Props) {
 
   return (
     <Modal
-      titulo={e ? `Boleta ${e.sapDocNum}` : 'Boleta'}
+      titulo={e ? (e.sapDocNum ? `Boleta ${e.sapDocNum}` : `Orden ${e.sapOrdenVenta}`) : 'Boleta'}
       subtitulo={e?.clienteNombre}
       onCerrar={onCerrar}
       ancho="max-w-[720px]"
@@ -47,19 +47,23 @@ export default function DetalleEntrega({ idEntrega, onCerrar }: Props) {
               <span className="chip chip-info">Disponible en SAP</span>
             )}
             <span className="text-body-sm text-ink-faint">
-              {fmtFecha(e.fechaDocumento)}
+              {fmtFechaHora(e.fechaDocumento, e.horaDocumento)}
             </span>
           </div>
 
           <Bloque titulo="Documentos en SAP">
-            <Campo etiqueta="Boleta de entrega" valor={String(e.sapDocNum)} />
             <Campo etiqueta="Orden de venta" valor={e.sapOrdenVenta?.toString() ?? '—'} />
-            {/* En una boleta disponible el número todavía no se resolvió:
-                para listar basta con que SAP la haya cerrado contra factura. */}
+            {/* Se reparte desde la orden, así que la boleta y la factura
+                pueden no existir todavía: SAP las emite después. */}
+            <Campo
+              etiqueta="Boleta de entrega"
+              valor={e.sapDocNum?.toString() ?? 'aún no generada en SAP'}
+            />
             <Campo
               etiqueta="Factura"
-              valor={asignada ? String(asignada.sapFacturaNum) : 'facturada en SAP'}
+              valor={e.sapFacturaNum?.toString() ?? 'aún no facturada'}
             />
+            <Campo etiqueta="Fecha de entrega" valor={fmtFecha(e.fechaEntrega)} />
           </Bloque>
 
           <Bloque titulo="Destino">

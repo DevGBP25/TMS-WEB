@@ -30,28 +30,39 @@ export interface OrdenDisponible {
   sapDocEntry: number
   sapDocNum: number
   fechaDocumento: string
+  /** Hora del documento, "11:12:00". SAP la manda aparte de la fecha. */
+  horaDocumento?: string
+  /** Fecha comprometida con el cliente. */
+  fechaEntrega?: string
   clienteCodigo: string
   clienteNombre: string
   direccion?: string
   municipio?: string
   comentarios?: string
-  /** SAP ya copió la orden a su entrega. Sólo esas se pueden repartir. */
+  /**
+   * SAP ya copió la orden a su entrega. Ya no condiciona el reparto —los
+   * viajes se arman días antes— pero dice en qué punto va el documento.
+   */
   tieneEntrega: boolean
 }
 
 /** Boleta que el TMS ya administra. */
 export interface Entrega {
   idEntrega: number
-  sapDocEntry: number
-  sapDocNum: number
+  /** Nulos mientras SAP no haya generado la entrega de esa orden. */
+  sapDocEntry?: number
+  sapDocNum?: number
+  sapOrdenDocEntry?: number
   sapOrdenVenta?: number
-  sapFacturaNum: number
+  sapFacturaNum?: number
   clienteCodigo: string
   clienteNombre: string
   direccion?: string
   municipio?: string
   pesoKg: number
   fechaDocumento: string
+  horaDocumento?: string
+  fechaEntrega?: string
   estado: EstadoEntrega
   idViaje?: number
   secuencia?: number
@@ -135,6 +146,24 @@ export const entregasApi = {
       idPiloto,
       sapDocEntries,
     }),
+
+  /** Pasa boletas ya repartidas a otro piloto, por id de entrega. */
+  cambiarPiloto: (idPiloto: number, ids: number[]) =>
+    api.post<{ ok: boolean; afectadas: number }>('/api/entregas/cambiar-piloto', {
+      idPiloto,
+      ids,
+    }),
+
+  /**
+   * Completa las boletas repartidas antes de que existiera su entrega: les
+   * pone número de boleta y factura cuando SAP ya las emitió.
+   */
+  vincular: (dias = 30) =>
+    api.post<{ ok: boolean; afectadas: number }>(`/api/entregas/vincular?dias=${dias}`, {}),
+
+  /** Las saca del viaje sin desasignarlas: siguen siendo del mismo piloto. */
+  sacarDeViaje: (ids: number[]) =>
+    api.post<{ ok: boolean; afectadas: number }>('/api/entregas/sacar-de-viaje', { ids }),
 
   /** Las borra del TMS: vuelven a la lista de disponibles. */
   liberar: (ids: number[]) =>

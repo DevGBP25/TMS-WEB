@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { alCaducarSesion, definirToken } from '@/api/client'
 import { authApi, type UsuarioAutenticado } from '@/api/auth'
+import { enUtc } from '@/utils/fechas'
 
 const CLAVE_TOKEN = 'tms.token'
 const CLAVE_EXPIRA = 'tms.expira'
@@ -43,7 +44,7 @@ function leerToken(): { token: string; expira: string } | null {
     if (!token || !expira) return null
 
     // Un token ya vencido no sirve: se descarta sin llamar a la API.
-    if (new Date(expira).getTime() <= Date.now()) return null
+    if (new Date(enUtc(expira)).getTime() <= Date.now()) return null
 
     return { token, expira }
   } catch {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
@@ -10,17 +10,18 @@ import {
 } from '@/api/entregas'
 import { ApiError } from '@/api/client'
 import { useAuth } from '@/auth/AuthContext'
-import { aIso, fmtFecha } from '@/utils/fechas'
+import { aIso, fmtFecha, fmtFechaHora } from '@/utils/fechas'
 import Chip from '@/components/Chip'
 import Icon from '@/components/Icon'
 import PageHeader from '@/components/PageHeader'
 import Paginacion from '@/components/Paginacion'
 import AsignarPiloto from '@/components/AsignarPiloto'
 import AsignarViaje from '@/components/AsignarViaje'
+import Confirmar from '@/components/Confirmar'
 import DetalleEntrega from '@/components/DetalleEntrega'
 import { FiltroOpciones, FiltroTexto, contiene } from '@/components/FiltroColumna'
 
-const th = 'py-sm px-md text-label-caps text-ink-faint uppercase font-normal align-top'
+const th = 'py-sm px-md text-label-caps text-ink-faint uppercase font-normal align-top text-center'
 
 type Vista = 'DISPONIBLES' | 'ASIGNADAS'
 type Entrega3 = 'TODAS' | 'SI' | 'NO'
@@ -75,6 +76,10 @@ export default function Entregas() {
   const [pagina, setPagina] = useState(1)
   const [porPagina, setPorPagina] = useState(50)
   const [seleccion, setSeleccion] = useState<Set<number>>(new Set())
+
+  /* Qué se está por hacer, mientras se pregunta. Nulo significa que no hay
+     ninguna pregunta abierta. */
+  const [confirmando, setConfirmando] = useState<'DESASIGNAR' | 'VINCULAR' | null>(null)
 
   const [asignandoPiloto, setAsignandoPiloto] = useState(false)
   const [asignandoViaje, setAsignandoViaje] = useState(false)
@@ -141,7 +146,8 @@ export default function Entregas() {
     const todas = asignadas.data?.items ?? []
 
     return todas.filter((e) =>
-      contiene(String(e.sapDocNum), fOrden) &&
+      (contiene(e.sapDocNum ? String(e.sapDocNum) : '', fOrden) ||
+       contiene(e.sapOrdenVenta ? String(e.sapOrdenVenta) : '', fOrden)) &&
       (contiene(e.clienteNombre, fCliente) || contiene(e.clienteCodigo, fCliente)) &&
       contiene(e.municipio, fMunicipio) &&
       contiene(e.pilotoNombre, fPiloto))
@@ -153,15 +159,12 @@ export default function Entregas() {
     if (totalPaginas > 0 && pagina > totalPaginas) setPagina(totalPaginas)
   }, [totalPaginas, pagina])
 
-  /* Sólo se puede repartir lo que ya tiene entrega en SAP: marcar el resto
-     sería invitar a un clic que el servidor va a rechazar. */
-  const repartibles = useMemo(
-    () => paginaOrdenes.filter((o) => o.tieneEntrega),
-    [paginaOrdenes],
-  )
+  /* Se reparte cualquier orden vigente, tenga entrega o no: los viajes se
+     arman uno o más días antes de que SAP genere la boleta. */
+  const repartibles = paginaOrdenes
 
   const elegidasDisp = useMemo(
-    () => (disponibles.data ?? []).filter((o) => o.tieneEntrega && seleccion.has(o.sapDocEntry)),
+    () => (disponibles.data ?? []).filter((o) => seleccion.has(o.sapDocEntry)),
     [disponibles.data, seleccion],
   )
 
@@ -183,11 +186,29 @@ export default function Entregas() {
 
   const todasMarcadas = marcables.length > 0 && marcables.every((id) => seleccion.has(id))
 
+  /* Las boletas repartidas antes de que existiera la entrega no saben su
+     número ni su factura hasta que alguien las vuelve a cruzar con SAP. Es
+     una consulta cara —trae líneas— así que se lanza a pedido. */
+  const vincular = useMutation({
+    mutationFn: () => entregasApi.vincular(),
+    onSuccess: (r) => {
+      setError(null)
+      setAviso(
+        r.afectadas > 0
+          ? `${r.afectadas} boleta(s) completadas con su documento de SAP.`
+          : 'Ninguna boleta pendiente tiene todavía su entrega en SAP.',
+      )
+      qc.invalidateQueries({ queryKey: ['entregas'] })
+    },
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : 'No se pudo consultar SAP.'),
+  })
+
   const liberar = useMutation({
     mutationFn: (ids: number[]) => entregasApi.liberar(ids),
     onSuccess: (r) => {
       setError(null)
-      setAviso(`${r.afectadas} boleta(s) liberadas: vuelven a la lista de SAP.`)
+      setAviso(`${r.afectadas} boleta(s) desasignadas: vuelven a la lista de órdenes de SAP.`)
       setSeleccion(new Set())
       qc.invalidateQueries({ queryKey: ['entregas'] })
       qc.invalidateQueries({ queryKey: ['viajes'] })
@@ -214,7 +235,7 @@ export default function Entregas() {
 
   const r = resumen.data
   const consulta = enVistaDisp ? disponibles : asignadas
-  const columnas = puedeOperar ? 8 : 7
+  const columnas = puedeOperar ? 9 : 8
 
   return (
     <div className="flex flex-col gap-lg pb-2xl">
@@ -226,7 +247,7 @@ export default function Entregas() {
             : 'Boletas que el TMS administra'
         }
       >
-        {enVistaDisp && (
+        {enVistaDisp ? (
           <button
             className="btn-ghost shrink-0"
             onClick={() => disponibles.refetch()}
@@ -235,6 +256,16 @@ export default function Entregas() {
           >
             <Icon name={disponibles.isFetching ? 'hourglass_empty' : 'sync'} size={18} />
             {disponibles.isFetching ? 'Leyendo SAP…' : 'Actualizar'}
+          </button>
+        ) : (
+          <button
+            className="btn-ghost shrink-0"
+            onClick={() => setConfirmando('VINCULAR')}
+            disabled={vincular.isPending}
+            title="Traer boletas de SAP: busca la boleta y la factura de lo que se repartió por anticipado"
+          >
+            <Icon name={vincular.isPending ? 'hourglass_empty' : 'sync'} size={18} />
+            {vincular.isPending ? 'Consultando SAP…' : 'Traer boletas de SAP'}
           </button>
         )}
       </PageHeader>
@@ -322,7 +353,9 @@ export default function Entregas() {
                   </th>
                 )}
 
-                <th className={`${th} min-w-[8rem]`}>
+                {/* El número no pasa de siete dígitos: la columna se ajusta a
+                    su contenido en vez de repartirse el ancho sobrante. */}
+                <th className={`${th} w-[7rem]`}>
                   {enVistaDisp ? 'Orden venta' : 'Boleta'}
                   <FiltroTexto
                     valor={fOrden}
@@ -336,35 +369,36 @@ export default function Entregas() {
                   <FiltroTexto valor={fCliente} onCambio={setFCliente} etiqueta="cliente" />
                 </th>
 
+                {enVistaDisp && (
+                  <th className={`${th} w-[17rem] hidden lg:table-cell`}>
+                    Comentarios
+                    <FiltroTexto
+                      valor={fComentario}
+                      onCambio={setFComent}
+                      etiqueta="comentarios"
+                    />
+                  </th>
+                )}
+
                 <th className={`${th} min-w-[9rem] hidden xl:table-cell`}>
                   Municipio
                   <FiltroTexto valor={fMunicipio} onCambio={setFMunicipio} etiqueta="municipio" />
                 </th>
 
                 {enVistaDisp ? (
-                  <>
-                    <th className={`${th} min-w-[14rem] hidden lg:table-cell`}>
-                      Comentarios
-                      <FiltroTexto
-                        valor={fComentario}
-                        onCambio={setFComent}
-                        etiqueta="comentarios"
-                      />
-                    </th>
-                    <th className={`${th} min-w-[8rem]`}>
-                      Entrega
-                      <FiltroOpciones
-                        valor={fEntrega}
-                        onCambio={setFEntrega}
-                        etiqueta="si tiene entrega"
-                        opciones={[
-                          { valor: 'TODAS', texto: 'Todas' },
-                          { valor: 'SI', texto: 'Con entrega' },
-                          { valor: 'NO', texto: 'Sin entrega' },
-                        ]}
-                      />
-                    </th>
-                  </>
+                  <th className={`${th} min-w-[8rem]`}>
+                    Entrega
+                    <FiltroOpciones
+                      valor={fEntrega}
+                      onCambio={setFEntrega}
+                      etiqueta="si tiene entrega"
+                      opciones={[
+                        { valor: 'TODAS', texto: 'Todas' },
+                        { valor: 'SI', texto: 'Con entrega' },
+                        { valor: 'NO', texto: 'Sin entrega' },
+                      ]}
+                    />
+                  </th>
                 ) : (
                   <>
                     <th className={`${th} min-w-[10rem]`}>
@@ -375,7 +409,10 @@ export default function Entregas() {
                   </>
                 )}
 
+                {/* Dos fechas distintas: cuándo se hizo el documento y para
+                    cuándo se comprometió la entrega. */}
                 <th className={`${th} hidden lg:table-cell`}>Fecha</th>
+                <th className={`${th} hidden lg:table-cell`}>Fecha entrega</th>
               </tr>
             </thead>
 
@@ -495,11 +532,16 @@ export default function Entregas() {
                 <>
                   <button
                     className="btn-ghost"
-                    onClick={() => liberar.mutate(elegidasAsig.map((e) => e.idEntrega))}
+                    onClick={() => setConfirmando('DESASIGNAR')}
                     disabled={liberar.isPending}
+                    title="Quita el piloto y la orden vuelve a la lista de SAP"
                   >
                     <Icon name="person_remove" size={18} />
-                    Liberar
+                    Desasignar
+                  </button>
+                  <button className="btn-ghost" onClick={() => setAsignandoPiloto(true)}>
+                    <Icon name="swap_horiz" size={18} />
+                    Cambiar piloto
                   </button>
                   <button className="btn-accent" onClick={() => setAsignandoViaje(true)}>
                     <Icon name="local_shipping" size={18} />
@@ -512,9 +554,53 @@ export default function Entregas() {
         </div>
       )}
 
+      {confirmando === 'DESASIGNAR' && (
+        <Confirmar
+          titulo="Desasignar boletas"
+          tono="danger"
+          textoAceptar="Sí, desasignar"
+          mensaje={
+            <>
+              Se quitará el piloto de {elegidasAsig.length} boleta(s) y volverán a la
+              lista de órdenes de venta de SAP.
+            </>
+          }
+          detalle={
+            /* Los números, para que se revise la selección antes de aceptar y
+               no después. Más de seis no caben, y ahí el total ya dice más. */
+            elegidasAsig.length <= 6
+              ? elegidasAsig.map((e) => e.sapDocNum ?? `OV ${e.sapOrdenVenta}`).join(', ')
+              : `${elegidasAsig.length} boletas seleccionadas`
+          }
+          cargando={liberar.isPending}
+          onConfirmar={() => {
+            setConfirmando(null)
+            liberar.mutate(elegidasAsig.map((e) => e.idEntrega))
+          }}
+          onCancelar={() => setConfirmando(null)}
+        />
+      )}
+
+      {confirmando === 'VINCULAR' && (
+        <Confirmar
+          titulo="Traer boletas de SAP"
+          textoAceptar="Sí, consultar"
+          mensaje="Se buscará en SAP la boleta y la factura de lo que se repartió por anticipado, y se guardarán en las boletas que ya las tengan emitidas."
+          detalle="La consulta a SAP puede tardar."
+          cargando={vincular.isPending}
+          onConfirmar={() => { setConfirmando(null); vincular.mutate() }}
+          onCancelar={() => setConfirmando(null)}
+        />
+      )}
+
       {asignandoPiloto && (
         <AsignarPiloto
-          sapDocEntries={elegidasDisp.map((o) => o.sapDocEntry)}
+          modo={enVistaDisp ? 'ASIGNAR' : 'CAMBIAR'}
+          ids={
+            enVistaDisp
+              ? elegidasDisp.map((o) => o.sapDocEntry)
+              : elegidasAsig.map((e) => e.idEntrega)
+          }
           onCerrar={() => setAsignandoPiloto(false)}
           onListo={(mensaje) => {
             setAsignandoPiloto(false)
@@ -560,14 +646,12 @@ function FilaOrden({
     <tr className={`transition-colors ${marcada ? 'bg-accent/10' : 'hover:bg-field'}`}>
       {puedeOperar && (
         <td className="py-md px-md">
-          {o.tieneEntrega && (
-            <input
-              type="checkbox"
-              checked={marcada}
-              onChange={onAlternar}
-              aria-label={`Seleccionar la orden ${o.sapDocNum}`}
-            />
-          )}
+          <input
+            type="checkbox"
+            checked={marcada}
+            onChange={onAlternar}
+            aria-label={`Seleccionar la orden ${o.sapDocNum}`}
+          />
         </td>
       )}
 
@@ -576,21 +660,17 @@ function FilaOrden({
       <td className="py-md px-md">
         <div className="text-ink">{o.clienteNombre}</div>
         {o.direccion && (
-          <div className="text-label-caps text-ink-faint mt-xs truncate max-w-[22rem]">
+          <div className="text-label-caps text-ink-faint mt-xs truncate max-w-[18rem]">
             {o.direccion}
           </div>
         )}
       </td>
 
-      <td className="py-md px-md text-ink-muted hidden xl:table-cell">{o.municipio ?? '—'}</td>
-
-      <td className="py-md px-md text-ink-muted hidden lg:table-cell">
-        {o.comentarios ? (
-          <span className="line-clamp-2 max-w-[24rem]">{o.comentarios}</span>
-        ) : (
-          '—'
-        )}
+      <td className="py-md px-md text-ink-muted hidden lg:table-cell align-top">
+        <Comentario texto={o.comentarios} orden={o.sapDocNum} />
       </td>
+
+      <td className="py-md px-md text-ink-muted hidden xl:table-cell">{o.municipio ?? '—'}</td>
 
       <td className="py-md px-md whitespace-nowrap">
         {o.tieneEntrega ? (
@@ -600,8 +680,12 @@ function FilaOrden({
         )}
       </td>
 
-      <td className="py-md px-md text-ink-muted whitespace-nowrap hidden lg:table-cell">
-        {fmtFecha(o.fechaDocumento)}
+      <td className="py-md px-md text-ink-muted whitespace-nowrap hidden lg:table-cell tabular">
+        {fmtFechaHora(o.fechaDocumento, o.horaDocumento)}
+      </td>
+
+      <td className="py-md px-md text-ink-muted whitespace-nowrap hidden lg:table-cell tabular">
+        {fmtFecha(o.fechaEntrega)}
       </td>
     </tr>
   )
@@ -641,19 +725,28 @@ function FilaAsignada({
         <button
           onClick={onAbrir}
           className="font-medium text-accent-soft hover:underline tabular"
-          title={`Ver el detalle de la boleta ${e.sapDocNum}`}
+          title={
+            e.sapDocNum
+              ? `Ver el detalle de la boleta ${e.sapDocNum}`
+              : `Ver el detalle de la orden ${e.sapOrdenVenta}`
+          }
         >
-          {e.sapDocNum}
+          {/* Mientras SAP no genere la entrega, la orden es el único número
+              que existe. Se muestra en su lugar en vez de dejar un hueco. */}
+          {e.sapDocNum ?? `OV ${e.sapOrdenVenta}`}
         </button>
-        {e.sapOrdenVenta && (
+        {e.sapDocNum && e.sapOrdenVenta && (
           <div className="text-label-caps text-ink-faint mt-xs">OV {e.sapOrdenVenta}</div>
+        )}
+        {!e.sapDocNum && (
+          <div className="text-label-caps text-ink-faint mt-xs">sin boleta aún</div>
         )}
       </td>
 
       <td className="py-md px-md">
         <div className="text-ink">{e.clienteNombre}</div>
         {e.direccion && (
-          <div className="text-label-caps text-ink-faint mt-xs truncate max-w-[22rem]">
+          <div className="text-label-caps text-ink-faint mt-xs truncate max-w-[18rem]">
             {e.direccion}
           </div>
         )}
@@ -675,10 +768,60 @@ function FilaAsignada({
         )}
       </td>
 
-      <td className="py-md px-md text-ink-muted whitespace-nowrap hidden lg:table-cell">
-        {fmtFecha(e.fechaDocumento)}
+      <td className="py-md px-md text-ink-muted whitespace-nowrap hidden lg:table-cell tabular">
+        {fmtFechaHora(e.fechaDocumento, e.horaDocumento)}
+      </td>
+
+      <td className="py-md px-md text-ink-muted whitespace-nowrap hidden lg:table-cell tabular">
+        {fmtFecha(e.fechaEntrega)}
       </td>
     </tr>
+  )
+}
+
+/**
+ * Comentario de la orden.
+ *
+ * Vienen largos —orden de compra, sucursal, instrucciones de reparto— y
+ * recortados a dos líneas se pierde justo la parte que el despachador
+ * necesita. Se abren en su sitio y no en un globo al pasar el ratón: un
+ * globo tapa la fila de abajo, se va solo y no se puede copiar.
+ */
+function Comentario({ texto, orden }: { texto?: string; orden: number }) {
+  const [abierto, setAbierto] = useState(false)
+  const [recortado, setRecortado] = useState(false)
+  const parrafo = useRef<HTMLParagraphElement>(null)
+
+  /* Si sobra texto no depende de cuántas letras tenga, sino de cuántas caben
+     en el ancho de la columna: se mide en pantalla. Cuando está abierto no se
+     mide, porque sin recorte el contenido siempre cabe y el botón para
+     volver a cerrarlo desaparecería. */
+  useLayoutEffect(() => {
+    const el = parrafo.current
+    if (!el || abierto) return
+    setRecortado(el.scrollHeight > el.clientHeight + 1)
+  }, [texto, abierto])
+
+  if (!texto) return <span className="text-ink-faint">—</span>
+
+  return (
+    <div className="w-[16rem] max-w-full flex flex-col items-start gap-xs">
+      <p ref={parrafo} className={abierto ? 'whitespace-pre-line' : 'line-clamp-2'}>{texto}</p>
+
+      {recortado && (
+        <button
+          type="button"
+          onClick={() => setAbierto((v) => !v)}
+          className="text-label-caps uppercase text-accent-soft hover:underline"
+          aria-expanded={abierto}
+          /* Sin la orden en el nombre, la tabla anuncia veinte botones
+             llamados igual. */
+          aria-label={`${abierto ? 'Ocultar' : 'Ver'} el comentario de la orden ${orden}`}
+        >
+          {abierto ? 'ver menos' : 'ver más'}
+        </button>
+      )}
+    </div>
   )
 }
 

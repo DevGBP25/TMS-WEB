@@ -41,30 +41,39 @@ public record ProductoDto(
 /// líneas, y eso es la diferencia entre dos segundos y veinte.
 /// </summary>
 public record OrdenDisponibleDto(
-    int      SapDocEntry,
-    int      SapDocNum,
-    DateTime FechaDocumento,
-    string   ClienteCodigo,
-    string   ClienteNombre,
-    string?  Direccion,
-    string?  Municipio,
-    string?  Comentarios,
-    // SAP ya copió la orden a su entrega. Sólo esas se pueden repartir.
-    bool     TieneEntrega);
+    int       SapDocEntry,
+    int       SapDocNum,
+    DateTime  FechaDocumento,
+    TimeSpan? HoraDocumento,
+    DateTime? FechaEntrega,
+    string    ClienteCodigo,
+    string    ClienteNombre,
+    string?   Direccion,
+    string?   Municipio,
+    string?   Comentarios,
+    /// <summary>
+    /// SAP ya copió la orden a su entrega. Ya no condiciona el reparto —los
+    /// viajes se arman días antes— pero dice en qué punto va el documento.
+    /// </summary>
+    bool      TieneEntrega);
 
 /// <summary>Fila del listado de boletas que el TMS ya administra.</summary>
 public record EntregaListaDto(
     int       IdEntrega,
-    int       SapDocEntry,
-    int       SapDocNum,
+    // Nulos mientras SAP no haya generado la entrega de esa orden.
+    int?      SapDocEntry,
+    int?      SapDocNum,
+    int?      SapOrdenDocEntry,
     int?      SapOrdenVenta,
-    int       SapFacturaNum,
+    int?      SapFacturaNum,
     string    ClienteCodigo,
     string    ClienteNombre,
     string?   Direccion,
     string?   Municipio,
     decimal   PesoKg,
     DateTime  FechaDocumento,
+    TimeSpan? HoraDocumento,
+    DateTime? FechaEntrega,
     string    Estado,
     int?      IdViaje,
     int?      Secuencia,
@@ -82,16 +91,19 @@ public record EntregaListaDto(
 /// <summary>Una boleta con todo lo que hay que saber de ella, productos incluidos.</summary>
 public record EntregaDetalleDto(
     int       IdEntrega,
-    int       SapDocEntry,
-    int       SapDocNum,
+    int?      SapDocEntry,
+    int?      SapDocNum,
+    int?      SapOrdenDocEntry,
     int?      SapOrdenVenta,
-    int       SapFacturaNum,
+    int?      SapFacturaNum,
     string    ClienteCodigo,
     string    ClienteNombre,
     string?   Direccion,
     string?   Municipio,
     decimal   PesoKg,
     DateTime  FechaDocumento,
+    TimeSpan? HoraDocumento,
+    DateTime? FechaEntrega,
     string    Estado,
     int?      IdViaje,
     int?      Secuencia,
@@ -155,6 +167,13 @@ public class IdsRequest
 {
     [MinLength(1, ErrorMessage = "Seleccione al menos una boleta.")]
     public List<int> Ids { get; set; } = [];
+}
+
+/// <summary>Boletas que pasan a otro piloto, por id de entrega.</summary>
+public class CambiarPilotoRequest : IdsRequest
+{
+    [Range(1, int.MaxValue, ErrorMessage = "Seleccione el piloto.")]
+    public int IdPiloto { get; set; }
 }
 
 public class AsignarViajeRequest : IdsRequest

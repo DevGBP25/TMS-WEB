@@ -8,19 +8,26 @@ import Icon from './Icon'
 import Modal from './Modal'
 
 interface Props {
-  /** Órdenes de venta seleccionadas, por DocEntry. */
-  sapDocEntries: number[]
+  /**
+   * Al repartir, los DocEntry de las órdenes de venta; al cambiar de piloto,
+   * los id de las boletas que ya están en el TMS. Son dos mundos distintos y
+   * por eso el modo viene aparte en vez de adivinarse.
+   */
+  ids: number[]
+  modo: 'ASIGNAR' | 'CAMBIAR'
   onCerrar: () => void
   onListo: (mensaje: string) => void
 }
 
 /**
- * Pone las boletas seleccionadas en manos de un piloto.
+ * Pone boletas en manos de un piloto, sea la primera vez o un cambio.
  *
- * Es el momento en que dejan de ser una lectura de SAP y pasan a existir en
- * el TMS: la asignación es lo que las guarda, con sus productos incluidos.
+ * Repartir es el momento en que la orden deja de ser una lectura de SAP y
+ * pasa a existir en el TMS. Cambiar de piloto no mueve nada de eso: la
+ * boleta es la misma, con sus productos y su historia; sólo cambia de manos.
  */
-export default function AsignarPiloto({ sapDocEntries, onCerrar, onListo }: Props) {
+export default function AsignarPiloto({ ids, modo, onCerrar, onListo }: Props) {
+  const cambio = modo === 'CAMBIAR' 
   const qc = useQueryClient()
 
   const [idPiloto, setIdPiloto] = useState('')
@@ -37,10 +44,16 @@ export default function AsignarPiloto({ sapDocEntries, onCerrar, onListo }: Prop
     mutationFn: async () => {
       if (!idPiloto) throw new ApiError('Elija el piloto.', 400)
 
-      const r = await entregasApi.asignarPiloto(Number(idPiloto), sapDocEntries)
-      const p = pilotos.data?.find((x) => String(x.idUsuario) === idPiloto)
+      const r = cambio
+        ? await entregasApi.cambiarPiloto(Number(idPiloto), ids)
+        : await entregasApi.asignarPiloto(Number(idPiloto), ids)
 
-      return `${r.afectadas} boleta(s) asignadas a ${p?.nombre ?? 'el piloto'}.`
+      const p = pilotos.data?.find((x) => String(x.idUsuario) === idPiloto)
+      const quien = p?.nombre ?? 'el piloto'
+
+      return cambio
+        ? `${r.afectadas} boleta(s) pasaron a ${quien}.`
+        : `${r.afectadas} boleta(s) asignadas a ${quien}.`
     },
     onSuccess: (mensaje) => {
       qc.invalidateQueries({ queryKey: ['entregas'] })
@@ -48,13 +61,17 @@ export default function AsignarPiloto({ sapDocEntries, onCerrar, onListo }: Prop
       onListo(mensaje)
     },
     onError: (e) =>
-      setError(e instanceof ApiError ? e.message : 'No se pudo asignar el piloto.'),
+      setError(e instanceof ApiError ? e.message : 'No se pudo cambiar el piloto.'),
   })
 
   return (
     <Modal
-      titulo="Asignar piloto"
-      subtitulo="El TMS busca la entrega de cada orden en SAP y la guarda con sus productos."
+      titulo={cambio ? 'Cambiar de piloto' : 'Asignar piloto'}
+      subtitulo={
+        cambio
+          ? 'La boleta sigue siendo la misma: sólo cambia de manos.'
+          : 'Se guarda la orden con sus productos. La boleta y la factura se traen de SAP cuando existan.'
+      }
       onCerrar={onCerrar}
     >
       <form
@@ -62,7 +79,7 @@ export default function AsignarPiloto({ sapDocEntries, onCerrar, onListo }: Prop
         onSubmit={(ev) => { ev.preventDefault(); setError(null); guardar.mutate() }}
       >
         <div className="rounded-xl bg-field border border-white/5 p-md flex flex-wrap gap-lg">
-          <Dato etiqueta="Órdenes" valor={String(sapDocEntries.length)} />
+          <Dato etiqueta={cambio ? 'Boletas' : 'Órdenes'} valor={String(ids.length)} />
         </div>
 
         <label className="flex flex-col gap-xs">
@@ -104,8 +121,13 @@ export default function AsignarPiloto({ sapDocEntries, onCerrar, onListo }: Prop
             Cancelar
           </button>
           <button type="submit" className="btn-accent" disabled={guardar.isPending}>
-            <Icon name={guardar.isPending ? 'hourglass_empty' : 'how_to_reg'} size={18} />
-            {guardar.isPending ? 'Asignando…' : 'Asignar'}
+            <Icon
+              name={guardar.isPending ? 'hourglass_empty' : cambio ? 'swap_horiz' : 'how_to_reg'}
+              size={18}
+            />
+            {guardar.isPending
+              ? cambio ? 'Cambiando…' : 'Asignando…'
+              : cambio ? 'Cambiar' : 'Asignar'}
           </button>
         </div>
       </form>

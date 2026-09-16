@@ -22,6 +22,10 @@ public record OrdenSap(
     int      SapDocEntry,
     int      SapDocNum,
     DateTime FechaDocumento,
+    // DocDate trae sólo la fecha; la hora viaja aparte, en DocTime.
+    TimeSpan? HoraDocumento,
+    // DocDueDate: la fecha en que se comprometió la entrega al cliente.
+    DateTime? FechaEntrega,
     string   ClienteCodigo,
     string   ClienteNombre,
     string?  Direccion,
@@ -34,7 +38,9 @@ public record OrdenSap(
     /// bajar las líneas de todas las entregas del rango.
     /// </summary>
     bool     Cerrada,
-    bool     Anulada);
+    bool     Anulada,
+    // Vacías en el listado y llenas al asignar: pedirlas cuesta veinte segundos.
+    IReadOnlyList<LineaSap> Lineas);
 
 /// <summary>
 /// Entrega de SAP con sus productos. Sólo se lee así al asignar, que es
@@ -78,6 +84,14 @@ public interface ISapServiceLayerClient
     Task<IReadOnlyList<EntregaSap>> EntregasDeOrdenesAsync(
         IReadOnlyList<int> ordenDocEntries, IReadOnlyList<string> clientes,
         DateTime desde, DateTime hasta, CancellationToken ct = default);
+
+    /// <summary>
+    /// Las mismas órdenes pero con sus productos, para las pocas que el
+    /// supervisor acaba de elegir. Aquí sí se pagan las líneas: son un
+    /// puñado de documentos y son lo que el piloto va a llevar.
+    /// </summary>
+    Task<IReadOnlyList<OrdenSap>> OrdenesConLineasAsync(
+        IReadOnlyList<int> docEntries, CancellationToken ct = default);
 
     /// <summary>GET crudo contra el Service Layer; <paramref name="recurso"/> va sin barra inicial.</summary>
     Task<string> GetRawAsync(string recurso, CancellationToken ct = default);
